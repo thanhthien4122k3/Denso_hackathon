@@ -12,8 +12,9 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator, model_validator
 
+from app.settings import MAX_QUANTITY
+
 Shift = Literal["CA_1", "CA_2", "CA_3"]
-MAX_QUANTITY = 1_000_000_000
 
 
 class ProductionRecordCreate(BaseModel):

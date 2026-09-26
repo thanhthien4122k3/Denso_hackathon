@@ -3,7 +3,6 @@
 import logging
 import sys
 from contextlib import asynccontextmanager
-from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
@@ -34,7 +33,7 @@ from app.routers import (
     system,
     tasks,
 )
-from app.settings import ConfigError, get_settings
+from app.settings import STATIC_DIR, ConfigError, get_settings
 
 try:
     sys.stdout.reconfigure(encoding="utf-8")
@@ -46,9 +45,6 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
 )
 logger = logging.getLogger("denso")
-
-BASE_DIR = Path(__file__).resolve().parent
-STATIC_DIR = BASE_DIR / "static"
 
 
 @asynccontextmanager

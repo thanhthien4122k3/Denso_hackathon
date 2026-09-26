@@ -3,6 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.services.task_service import TaskService
+from app.settings import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 
@@ -12,7 +13,7 @@ def get_service() -> TaskService:
 
 
 @router.get("")
-def list_tasks(page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100),
+def list_tasks(page: int = Query(1, ge=1), page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
                department_id: int | None = Query(None), status: str | None = Query(None),
                service: TaskService = Depends(get_service)):
     rows, total = service.list(page, page_size, department_id, status)

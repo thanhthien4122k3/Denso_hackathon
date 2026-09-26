@@ -3,14 +3,11 @@
 Quy tắc dùng tập toán tử rõ ràng, không dùng eval.
 """
 
-from pathlib import Path
-
 import yaml
 
-RULES_PATH = Path(__file__).resolve().parent.parent.parent / "config" / "rules.yaml"
+from app.settings import RULES_YAML_PATH
 
 ALLOWED_OPS = {"eq", "ne", "gt", "lt", "gte", "lte", "in", "exists"}
-
 
 class RulesConfigError(ValueError):
     """File quy tắc không hợp lệ."""
@@ -39,10 +36,10 @@ def load_rules() -> tuple[list, str]:
         return _rules_cache, _version_cache
 
     try:
-        with open(RULES_PATH, "r", encoding="utf-8") as f:
+        with open(RULES_YAML_PATH, "r", encoding="utf-8") as f:
             raw = yaml.safe_load(f)
     except FileNotFoundError as exc:
-        raise RulesConfigError(f"Không tìm thấy file quy tắc: {RULES_PATH}") from exc
+        raise RulesConfigError(f"Không tìm thấy file quy tắc: {RULES_YAML_PATH}") from exc
     except yaml.YAMLError as exc:
         raise RulesConfigError(f"File quy tắc không hợp lệ: {exc}") from exc
 

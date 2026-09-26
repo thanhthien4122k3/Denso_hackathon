@@ -3,6 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
 from app.services.incident_service import IncidentService
+from app.settings import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 
 router = APIRouter(prefix="/api/incidents", tags=["incidents"])
 
@@ -17,7 +18,7 @@ def _page(page, page_size, total):
 
 
 @router.get("")
-def list_incidents(page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100),
+def list_incidents(page: int = Query(1, ge=1), page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
                    status: str | None = Query(None), incident_type: str | None = Query(None),
                    search: str | None = Query(None), service: IncidentService = Depends(get_service)):
     rows, total = service.list(page, page_size, status, incident_type, search)

@@ -5,6 +5,8 @@ from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi import status
 
+from app.settings import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
+
 from app.schemas import (
     CreateResponse,
     DetailResponse,
@@ -54,7 +56,7 @@ def create_record(
 @router.get("", response_model=ListResponse, summary="Danh sách báo cáo sản xuất")
 def list_records(
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
+    page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
     date_from: date | None = Query(None),
     date_to: date | None = Query(None),
     line_code: str | None = Query(None, max_length=50),

@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.catalog import CATALOG_ENTITIES, CATALOG_KEYS
 from app.services.catalog_service import CatalogService
+from app.settings import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 
 router = APIRouter(prefix="/api/catalog", tags=["catalog"])
 
@@ -27,7 +28,7 @@ def _ensure_key(key: str):
 def list_entities(
     key: str,
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
+    page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
     search: str | None = Query(None),
     active: bool | None = Query(None),
     service: CatalogService = Depends(get_service),

@@ -3,6 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.services.system_service import SystemService
+from app.settings import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 
 router = APIRouter(prefix="/api/system", tags=["system-layer"])
 
@@ -18,7 +19,7 @@ def _page(page, page_size, total):
 
 # sources
 @router.get("/sources")
-def list_sources(page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100),
+def list_sources(page: int = Query(1, ge=1),     page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
                  search: str | None = Query(None), service: SystemService = Depends(get_service)):
     rows, total = service.list_sources(page, page_size, search)
     return {"success": True, "message": "OK", "data": {"items": rows, "pagination": _page(page, page_size, total)}}
@@ -42,7 +43,7 @@ def delete_source(source_id: int, service: SystemService = Depends(get_service))
 
 # datasets
 @router.get("/datasets")
-def list_datasets(page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100),
+def list_datasets(page: int = Query(1, ge=1),     page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
                   source_id: int | None = Query(None), search: str | None = Query(None),
                   service: SystemService = Depends(get_service)):
     rows, total = service.list_datasets(page, page_size, source_id, search)
@@ -89,7 +90,7 @@ def delete_field(field_id: int, service: SystemService = Depends(get_service)):
 
 # flows
 @router.get("/flows")
-def list_flows(page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100),
+def list_flows(page: int = Query(1, ge=1),     page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
                service: SystemService = Depends(get_service)):
     rows, total = service.list_flows(page, page_size)
     return {"success": True, "message": "OK", "data": {"items": rows, "pagination": _page(page, page_size, total)}}

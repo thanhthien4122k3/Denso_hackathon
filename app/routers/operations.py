@@ -5,6 +5,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, Query
 
 from app.services.operations_service import OperationsService
+from app.settings import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 
 router = APIRouter(prefix="/api/operations", tags=["operations"])
 
@@ -25,7 +26,7 @@ def _parse_time(value):
 
 
 @router.get("/machine-states")
-def list_states(page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100),
+def list_states(page: int = Query(1, ge=1),     page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
                 machine_id: int | None = Query(None), from_time: str | None = Query(None),
                 to_time: str | None = Query(None), service: OperationsService = Depends(get_service)):
     rows, total = service.list_states(page, page_size, machine_id, _parse_time(from_time), _parse_time(to_time))
@@ -38,7 +39,7 @@ def create_state(payload: dict, service: OperationsService = Depends(get_service
 
 
 @router.get("/downtimes")
-def list_downtimes(page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100),
+def list_downtimes(page: int = Query(1, ge=1),     page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
                    machine_id: int | None = Query(None), from_time: str | None = Query(None),
                    to_time: str | None = Query(None), service: OperationsService = Depends(get_service)):
     rows, total = service.list_downtimes(page, page_size, machine_id, _parse_time(from_time), _parse_time(to_time))
@@ -56,7 +57,7 @@ def close_downtime(downtime_id: int, payload: dict, service: OperationsService =
 
 
 @router.get("/qc")
-def list_qc(page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100),
+def list_qc(page: int = Query(1, ge=1),     page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
             lot_id: int | None = Query(None), result: str | None = Query(None),
             service: OperationsService = Depends(get_service)):
     rows, total = service.list_qc(page, page_size, lot_id, result)
@@ -69,7 +70,7 @@ def create_qc(payload: dict, service: OperationsService = Depends(get_service)):
 
 
 @router.get("/material")
-def list_material(page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100),
+def list_material(page: int = Query(1, ge=1),     page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
                   material_id: int | None = Query(None),
                   service: OperationsService = Depends(get_service)):
     rows, total = service.list_material(page, page_size, material_id)

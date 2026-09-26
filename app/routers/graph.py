@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.graph import EDGE_KINDS, NODE_LABELS, NODE_TYPES
 from app.services.graph_service import GraphService
+from app.settings import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 
 router = APIRouter(prefix="/api/graph", tags=["graph"])
 
@@ -30,7 +31,7 @@ def map_graph(types: str | None = Query(None), service: GraphService = Depends(g
 
 
 @router.get("/edges")
-def list_edges(page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100),
+def list_edges(page: int = Query(1, ge=1), page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
                kind: str | None = Query(None), is_simulated: bool | None = Query(None),
                service: GraphService = Depends(get_service)):
     rows, total = service.list_edges(page, page_size, kind, is_simulated)

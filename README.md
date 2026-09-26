@@ -75,6 +75,24 @@ thành mật khẩu `postgres` bạn đã đặt ở Bước 2. Lưu và đóng.
 > Nếu PostgreSQL của bạn không dùng `localhost`, cổng `5432` hay tài khoản `postgres`,
 > sửa luôn các dòng `DB_HOST`, `DB_PORT`, `DB_USER` cho khớp.
 
+**Các giá trị tùy chỉnh khác (không bắt buộc, có thể bỏ qua):**
+
+| Biến trong `.env` | Ý nghĩa | Mặc định |
+|---|---|---|
+| `APP_PORT` | Cổng chạy ứng dụng | `8000` |
+| `MAX_QUANTITY` | Số lượng tối đa mỗi ô (đạt/lỗi) | `1000000000` |
+| `MATERIAL_LOW_THRESHOLD` | Ngưỡng cảnh báo thiếu vật tư | `50` |
+| `DEFAULT_PAGE_SIZE` | Số dòng mỗi trang danh sách | `20` |
+| `MAX_PAGE_SIZE` | Số dòng tối đa mỗi trang | `100` |
+| `DATABASE_YAML_PATH` | File SQL khởi tạo bảng | `config/database.yaml` |
+| `PRODUCTION_QUERIES_YAML_PATH` | File SQL sản lượng | `config/production_queries.yaml` |
+| `RULES_YAML_PATH` | File quy tắc phân tích | `config/rules.yaml` |
+| `MIGRATIONS_DIR` | Thư mục migration | `migrations` |
+| `STATIC_DIR` | Thư mục giao diện | `app/static` |
+
+> Đường dẫn file/thư mục: để trống là dùng mặc định; muốn đổi thì ghi đường dẫn tuyệt đối
+> (hoặc tương đối so với thư mục dự án).
+
 ---
 
 ## B. Chạy ứng dụng

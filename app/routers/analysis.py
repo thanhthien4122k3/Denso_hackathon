@@ -3,6 +3,7 @@
 from fastapi import APIRouter, Depends, Query
 
 from app.services.analysis_service import AnalysisService
+from app.settings import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 
 router = APIRouter(prefix="/api/analysis", tags=["analysis"])
 
@@ -42,7 +43,7 @@ def run_whatif(payload: dict, service: AnalysisService = Depends(get_service)):
 
 
 @router.get("/runs")
-def list_runs(page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100),
+def list_runs(page: int = Query(1, ge=1), page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
               source_type: str | None = Query(None),
               service: AnalysisService = Depends(get_service)):
     rows, total = service.list_runs(page, page_size, source_type)

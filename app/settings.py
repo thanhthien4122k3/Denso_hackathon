@@ -13,6 +13,33 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parent.parent
 ENV_FILE = BASE_DIR / ".env"
 
+# Nạp .env vào os.environ ngay khi import để các hằng số điều chỉnh bên dưới
+# có thể đọc từ .env (override=False: biến môi trường thật vẫn được ưu tiên).
+load_dotenv(ENV_FILE, override=False)
+
+# Các giá trị điều chỉnh của ứng dụng, có thể ghi đè qua .env (xem .env.example).
+MAX_QUANTITY = int(os.getenv("MAX_QUANTITY", "1000000000"))
+MATERIAL_LOW_THRESHOLD = int(os.getenv("MATERIAL_LOW_THRESHOLD", "50"))
+DEFAULT_PAGE_SIZE = int(os.getenv("DEFAULT_PAGE_SIZE", "20"))
+MAX_PAGE_SIZE = int(os.getenv("MAX_PAGE_SIZE", "100"))
+
+
+def _path(name: str, default_rel: str) -> Path:
+    """Đọc đường dẫn từ .env; mặc định tính tương đối với thư mục dự án."""
+    raw = os.getenv(name, "").strip()
+    if raw:
+        path = Path(raw)
+        return path if path.is_absolute() else (BASE_DIR / path)
+    return BASE_DIR / default_rel
+
+
+# Đường dẫn các file/thư mục, có thể ghi đè qua .env (xem .env.example).
+DATABASE_YAML_PATH = _path("DATABASE_YAML_PATH", "config/database.yaml")
+PRODUCTION_QUERIES_YAML_PATH = _path("PRODUCTION_QUERIES_YAML_PATH", "config/production_queries.yaml")
+RULES_YAML_PATH = _path("RULES_YAML_PATH", "config/rules.yaml")
+MIGRATIONS_DIR = _path("MIGRATIONS_DIR", "migrations")
+STATIC_DIR = _path("STATIC_DIR", "app/static")
+
 
 class ConfigError(ValueError):
     """Thiếu hoặc sai cấu hình trong .env."""

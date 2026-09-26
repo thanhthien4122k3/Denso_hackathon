@@ -8,10 +8,7 @@ from pathlib import Path
 
 import yaml
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-CONFIG_DIR = PROJECT_ROOT / "config"
-DATABASE_CONFIG_PATH = CONFIG_DIR / "database.yaml"
-PRODUCTION_QUERIES_PATH = CONFIG_DIR / "production_queries.yaml"
+from app.settings import DATABASE_YAML_PATH, PRODUCTION_QUERIES_YAML_PATH
 
 ALLOWED_FETCH = {"none", "one", "all"}
 
@@ -73,8 +70,8 @@ class QueryLoader:
         }
 
 
-_database_loader = QueryLoader(DATABASE_CONFIG_PATH)
-_production_loader = QueryLoader(PRODUCTION_QUERIES_PATH)
+_database_loader = QueryLoader(DATABASE_YAML_PATH)
+_production_loader = QueryLoader(PRODUCTION_QUERIES_YAML_PATH)
 
 
 def get_database_queries() -> dict:

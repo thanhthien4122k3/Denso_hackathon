@@ -8,8 +8,7 @@ from app.repositories.catalog_repository import CatalogRepository
 from app.repositories.graph_repository import GraphRepository
 from app.repositories.incident_repository import IncidentRepository
 from app.repositories.operations_repository import OperationsRepository
-
-MATERIAL_LOW_THRESHOLD = 50
+from app.settings import MATERIAL_LOW_THRESHOLD
 
 
 class AnalysisService:

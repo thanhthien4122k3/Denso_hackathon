@@ -13,8 +13,7 @@ from psycopg import OperationalError
 
 from app.database import get_connection
 from app.exceptions import DatabaseUnavailableError
-
-MIGRATIONS_DIR = Path(__file__).resolve().parent.parent / "migrations"
+from app.settings import MIGRATIONS_DIR
 
 
 class MigrationError(RuntimeError):
