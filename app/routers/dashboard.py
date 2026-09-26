@@ -1,6 +1,8 @@
 """API tổng quan."""
 
-from fastapi import APIRouter, Depends
+from datetime import date
+
+from fastapi import APIRouter, Depends, Query
 
 from app.services.dashboard_service import DashboardService
 
@@ -12,5 +14,11 @@ def get_service() -> DashboardService:
 
 
 @router.get("")
-def summary(service: DashboardService = Depends(get_service)):
-    return {"success": True, "message": "OK", "data": service.summary()}
+def summary(
+    date_from: date | None = Query(None),
+    date_to: date | None = Query(None),
+    simulated: bool | None = Query(None),
+    service: DashboardService = Depends(get_service),
+):
+    return {"success": True, "message": "OK",
+            "data": service.summary(date_from=date_from, date_to=date_to, simulated=simulated)}

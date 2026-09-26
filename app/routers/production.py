@@ -65,7 +65,7 @@ def list_records(
 ):
     if date_from and date_to and date_from > date_to:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="date_from phải nhỏ hơn hoặc bằng date_to.",
         )
 

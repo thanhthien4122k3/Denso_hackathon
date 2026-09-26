@@ -3,46 +3,42 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Denso D3 - Liên kết chuỗi sản xuất và phân tích sự cố</title>
+  <title>Denso D3 — Liên kết sản xuất & phân tích sự cố</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
   <header class="app-header">
-    <div class="header-inner">
-      <div>
-        <h1>Denso D3</h1>
-        <p class="subtitle">Liên kết chuỗi sản xuất &amp; phân tích sự cố</p>
+    <div class="header-left">
+      <button id="nav-toggle" class="icon-btn header-toggle" aria-label="Mở menu" aria-expanded="false">☰</button>
+      <button id="collapse-toggle" class="icon-btn header-toggle collapse-toggle" aria-label="Thu gọn menu" title="Thu gọn">‹</button>
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span class="brand-name">Denso D3</span>
       </div>
-      <button id="nav-toggle" class="nav-toggle" aria-label="Menu">☰</button>
+    </div>
+    <div class="header-center">
+      <h1 id="page-title" class="page-title">Trung tâm vận hành</h1>
+    </div>
+    <div class="header-right">
+      <div class="mode-toggle" role="group" aria-label="Chế độ dữ liệu">
+        <button id="mode-operations" class="mode-btn active" data-mode="operations">Vận hành</button>
+        <button id="mode-simulation" class="mode-btn" data-mode="simulation">Mô phỏng</button>
+      </div>
+      <button id="header-record" class="btn btn-primary header-action">+ Ghi nhận</button>
+      <button id="header-incident" class="btn btn-outline header-action">Báo cáo sự cố</button>
     </div>
   </header>
 
   <div class="layout">
-    <nav id="sidebar" class="sidebar">
-      <a href="#" data-section="dashboard">1. Tổng quan</a>
-      <a href="#" data-section="catalog">2. Danh mục sản xuất</a>
-      <a href="#" data-section="system">3. Nguồn dữ liệu &amp; liên kết</a>
-      <a href="#" data-section="operations">4. Ghi nhận vận hành</a>
-      <a href="#" data-section="incidents">5. Quản lý sự cố</a>
-      <a href="#" data-section="map">6. Bản đồ liên kết</a>
-      <a href="#" data-section="analysis">7. Phân tích tác động</a>
-      <a href="#" data-section="tasks">8. Hành động theo bộ phận</a>
-      <a href="#" data-section="scenarios">9. Kịch bản mô phỏng</a>
-      <a href="#" data-section="survey">10. Thông tin khảo sát</a>
+    <nav id="sidebar" class="sidebar" aria-label="Điều hướng chính">
+      <div class="sidebar-scroll">
+        <div id="sidebar-groups"></div>
+      </div>
     </nav>
 
     <main class="content">
-      <section id="section-dashboard" class="section"></section>
-      <section id="section-catalog" class="section"></section>
-      <section id="section-system" class="section"></section>
-      <section id="section-operations" class="section"></section>
-      <section id="section-incidents" class="section"></section>
-      <section id="section-map" class="section"></section>
-      <section id="section-analysis" class="section"></section>
-      <section id="section-tasks" class="section"></section>
-      <section id="section-scenarios" class="section"></section>
-      <section id="section-survey" class="section"></section>
+      <div id="view" class="view"></div>
     </main>
   </div>
 
