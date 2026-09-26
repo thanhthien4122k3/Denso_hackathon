@@ -1,0 +1,76 @@
+# Các câu SQL nghiệp vụ. Giá trị người dùng luôn được bind bằng %(name)s,
+# không ghép chuỗi/f-string.
+queries:
+  insert_record:
+    description: "Chèn bản ghi sản xuất mới và trả về bản ghi đã lưu"
+    fetch: one
+    sql: |
+      INSERT INTO production.production_records (
+          request_id, production_date, shift, line_code, process_code,
+          product_code, lot_code, good_quantity, defect_quantity,
+          operator_name, note
+      )
+      VALUES (
+          %(request_id)s, %(production_date)s, %(shift)s, %(line_code)s, %(process_code)s,
+          %(product_code)s, %(lot_code)s, %(good_quantity)s, %(defect_quantity)s,
+          %(operator_name)s, %(note)s
+      )
+      RETURNING
+          id, request_id, production_date, shift, line_code, process_code,
+          product_code, lot_code, good_quantity, defect_quantity,
+          operator_name, note, created_at;
+
+  find_by_request_id:
+    description: "Tìm bản ghi theo request_id (chống gửi trùng)"
+    fetch: one
+    sql: |
+      SELECT
+          id, request_id, production_date, shift, line_code, process_code,
+          product_code, lot_code, good_quantity, defect_quantity,
+          operator_name, note, created_at
+      FROM production.production_records
+      WHERE request_id = %(request_id)s;
+
+  find_by_id:
+    description: "Lấy chi tiết bản ghi theo id"
+    fetch: one
+    sql: |
+      SELECT
+          id, request_id, production_date, shift, line_code, process_code,
+          product_code, lot_code, good_quantity, defect_quantity,
+          operator_name, note, created_at
+      FROM production.production_records
+      WHERE id = %(id)s;
+
+  list_records:
+    description: "Danh sách bản ghi có lọc và phân trang"
+    fetch: all
+    sql: |
+      SELECT
+          id, request_id, production_date, shift, line_code, process_code,
+          product_code, lot_code, good_quantity, defect_quantity,
+          operator_name, note, created_at
+      FROM production.production_records
+      WHERE (%(date_from)s::date IS NULL OR production_date >= %(date_from)s::date)
+        AND (%(date_to)s::date IS NULL OR production_date <= %(date_to)s::date)
+        AND (%(line_code)s::text IS NULL OR line_code = %(line_code)s::text)
+        AND (%(lot_code)s::text IS NULL OR lot_code = %(lot_code)s::text)
+      ORDER BY created_at DESC, id DESC
+      LIMIT %(page_size)s OFFSET %(offset)s;
+
+  count_records:
+    description: "Đếm tổng bản ghi theo cùng điều kiện lọc"
+    fetch: one
+    sql: |
+      SELECT COUNT(*) AS total
+      FROM production.production_records
+      WHERE (%(date_from)s::date IS NULL OR production_date >= %(date_from)s::date)
+        AND (%(date_to)s::date IS NULL OR production_date <= %(date_to)s::date)
+        AND (%(line_code)s::text IS NULL OR line_code = %(line_code)s::text)
+        AND (%(lot_code)s::text IS NULL OR lot_code = %(lot_code)s::text);
+
+  health_check:
+    description: "Kiểm tra kết nối database"
+    fetch: one
+    sql: |
+      SELECT 1;

@@ -1,0 +1,10 @@
+fastapi>=0.110,<1.0
+uvicorn[standard]>=0.29,<1.0
+psycopg[binary]>=3.1,<4.0
+pydantic>=2.6,<3.0
+python-dotenv>=1.0,<2.0
+PyYAML>=6.0,<7.0
+
+# Kiểm thử
+pytest>=8.0,<9.0
+httpx>=0.27,<1.0

@@ -1,0 +1,51 @@
+# SQL khởi tạo schema/bảng/index.
+# Chỉ tạo khi chưa tồn tại (IF NOT EXISTS), không DROP/TRUNCATE/reset dữ liệu.
+queries:
+  create_schema:
+    description: "Tạo schema production nếu chưa tồn tại"
+    fetch: none
+    sql: |
+      CREATE SCHEMA IF NOT EXISTS production;
+
+  create_table:
+    description: "Tạo bảng production_records nếu chưa tồn tại"
+    fetch: none
+    sql: |
+      CREATE TABLE IF NOT EXISTS production.production_records (
+          id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+          request_id UUID NOT NULL UNIQUE,
+          production_date DATE NOT NULL,
+          shift VARCHAR(20) NOT NULL
+              CHECK (shift IN ('CA_1', 'CA_2', 'CA_3')),
+          line_code VARCHAR(50) NOT NULL
+              CHECK (length(btrim(line_code)) > 0),
+          process_code VARCHAR(50) NOT NULL
+              CHECK (length(btrim(process_code)) > 0),
+          product_code VARCHAR(100) NOT NULL
+              CHECK (length(btrim(product_code)) > 0),
+          lot_code VARCHAR(100) NOT NULL
+              CHECK (length(btrim(lot_code)) > 0),
+          good_quantity INTEGER NOT NULL
+              CHECK (good_quantity >= 0 AND good_quantity <= 1000000000),
+          defect_quantity INTEGER NOT NULL
+              CHECK (defect_quantity >= 0 AND defect_quantity <= 1000000000),
+          operator_name VARCHAR(100) NOT NULL
+              CHECK (length(btrim(operator_name)) > 0),
+          note TEXT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          CHECK ((good_quantity + defect_quantity) > 0)
+      );
+
+  index_production_date:
+    description: "Index hỗ trợ lọc theo ngày sản xuất"
+    fetch: none
+    sql: |
+      CREATE INDEX IF NOT EXISTS idx_production_records_production_date
+          ON production.production_records (production_date);
+
+  index_lot_code:
+    description: "Index hỗ trợ tra cứu theo mã lot"
+    fetch: none
+    sql: |
+      CREATE INDEX IF NOT EXISTS idx_production_records_lot_code
+          ON production.production_records (lot_code);
