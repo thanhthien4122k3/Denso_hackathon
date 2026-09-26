@@ -49,7 +49,7 @@ Gõ `\q` để thoát.
 
 ### Bước 4: Lấy thư mục project
 
-Copy toàn bộ thư mục **`Denso_production_input`** vào máy tính của bạn (ví dụ `C:\Denso_production_input`).
+Clon repo **`Denso_production_input`** vào máy tính của bạn (ví dụ `C:\Denso_production_input`).
 
 ### Bước 5: Cài thư viện và cấu hình
 
