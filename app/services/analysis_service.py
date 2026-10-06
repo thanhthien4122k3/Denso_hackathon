@@ -106,7 +106,7 @@ class AnalysisService:
         edges = self.graph.all_edges()
         impacts = []
         if source_id is not None:
-            impacts = traverse(edges, source_type, source_id, propagate, max_depth)
+            impacts = (edges, source_type, source_id, propagate, max_depth)
 
         dept_map = self._department_map()
         rule_assumptions = " ".join(r.get("assumptions", "") for r in matched).strip()
