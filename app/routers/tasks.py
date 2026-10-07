@@ -1,6 +1,6 @@
 """API công việc theo bộ phận."""
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
 from app.services.task_service import TaskService
 from app.settings import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
@@ -33,6 +33,17 @@ def get_task(task_id: int, service: TaskService = Depends(get_service)):
 @router.post("", status_code=201)
 def create_task(payload: dict, service: TaskService = Depends(get_service)):
     return {"success": True, "message": "Đã tạo.", "data": service.create(payload)}
+
+
+@router.post("/from-action", status_code=201)
+def create_from_action(payload: dict, response: Response,
+                       service: TaskService = Depends(get_service)):
+    row, created = service.create_from_action(payload)
+    if not created:
+        response.status_code = 200
+    return {"success": True,
+            "message": "Đã tạo công việc." if created else "Công việc đã tồn tại từ đề xuất này.",
+            "data": row}
 
 
 @router.put("/{task_id}")

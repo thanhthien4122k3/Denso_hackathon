@@ -112,26 +112,85 @@ Mở trình duyệt: **http://localhost:8000**
 
 ---
 
+## B.1. Đăng nhập và tạo tài khoản
+
+Ứng dụng có đăng nhập bắt buộc. Mở **http://localhost:8000** sẽ hiện trang đăng nhập.
+
+### Tạo tài khoản quản trị đầu tiên (làm 1 lần)
+
+Mở PowerShell thứ hai (cùng thư mục project, đã kích hoạt `.venv`):
+
+```powershell
+python scripts/create_user.py
+```
+
+Làm theo hướng dẫn để nhập:
+- Tên đăng nhập (ví dụ `admin`).
+- Tên hiển thị.
+- Vai trò: nhập `ADMIN`.
+- Mật khẩu (gõ, không hiện lên màn hình).
+
+### Tài khoản mặc định (đã tạo sẵn)
+
+Nếu đã chạy bước tạo tài khoản demo, có sẵn 4 tài khoản theo từng vai trò, mật khẩu mặc định **`123456`**:
+
+| Tên đăng nhập | Vai trò |
+|---|---|
+| `recorder` | OPERATOR (người ghi nhận) |
+| `handler` | HANDLER (người xử lý) |
+| `coordinator` | COORDINATOR (người điều phối) |
+| `admin` | ADMIN (quản trị) |
+
+### Đăng nhập
+
+1. Mở **http://localhost:8000**.
+2. Nhập tên đăng nhập và mật khẩu (mặc định `123456`) → bấm **Đăng nhập**.
+
+### Các vai trò (phân quyền tối thiểu)
+
+| Vai trò | Được làm gì |
+|---|---|
+| `OPERATOR` | Nhập vận hành, báo cáo sự cố (người ghi nhận) |
+| `HANDLER` | Tiếp nhận và cập nhật công việc được giao |
+| `COORDINATOR` | Xác minh bối cảnh, xác nhận khôi phục, đóng hồ sơ |
+| `ADMIN` | Quản lý tài khoản, danh mục, cấu hình, quy tắc |
+
+Sau khi đăng nhập bằng `ADMIN`, vào menu **Tài khoản & quyền** để tạo thêm tài khoản
+hoặc dùng bộ tài khoản demo (xem bên dưới).
+
+> Mật khẩu được băm (PBKDF2-SHA256), phiên dùng cookie. Không lưu mật khẩu dạng văn bản.
+> Mật khẩu mặc định `123456` chỉ dùng cho môi trường nội bộ/demo — nên đổi lại trước khi đưa vào sử dụng thật.
+
+### Hướng dẫn chi tiết từng bước
+
+Xem tài liệu đầy đủ: **`docs/USAGE_GUIDE.md`** (khởi động → tạo tài khoản → đăng nhập →
+nạp mô phỏng → nhập lỗi → phân tích → xác minh → đóng hồ sơ).
+
+---
+
 ## C. Dùng thử ngay (3 bước)
 
-1. Bấm menu **9. Kịch bản mô phỏng** → **Nạp dữ liệu demo**.
-2. Bấm menu **7. Phân tích tác động** → chọn sự cố `INC-001` → **Chạy phân tích**.
+> Cần đăng nhập trước (xem mục B.1).
+
+1. Bấm menu **Kịch bản mô phỏng** (nhóm *Phân tích*) → **Nạp dữ liệu demo**.
+2. Bấm menu **Phân tích tác động** → chọn sự cố `INC-001` → **Chạy phân tích**.
 3. Xem kết quả: đối tượng bị ảnh hưởng, đường lan truyền, nguyên nhân gợi ý, việc cần làm.
 
 ## Các menu chính
 
-| Menu | Dùng để làm gì |
-|---|---|
-| 1. Tổng quan | Xem số liệu nhanh |
-| 2. Danh mục sản xuất | Thêm/sửa bộ phận, chuyền, công đoạn, máy, vật tư... |
-| 3. Nguồn dữ liệu | Khai báo hệ thống MES/ERP, dataset, trường, luồng |
-| 4. Ghi nhận vận hành | Nhập sản lượng, trạng thái máy, dừng máy, QC, vật tư |
-| 5. Quản lý sự cố | Tạo sự cố, ghi nguyên nhân |
-| 6. Bản đồ liên kết | Xem sơ đồ quan hệ máy/công đoạn/vật tư/dữ liệu |
-| 7. Phân tích tác động | Chạy phân tích và xem kết quả |
-| 8. Hành động theo bộ phận | Quản lý công việc |
-| 9. Kịch bản mô phỏng | Nạp dữ liệu demo, thử 3 tình huống |
-| 10. Thông tin khảo sát | Ghi các câu hỏi cần xác nhận với nhà máy |
+| Nhóm | Menu | Dùng để làm gì |
+|---|---|---|
+| Tổng quan | Trung tâm vận hành | Xem số liệu nhanh |
+| Vận hành | Ghi nhận dữ liệu | Nhập sản lượng, trạng thái máy, dừng máy, QC, vật tư |
+| Vận hành | Sự cố | Tạo sự cố, ghi nguyên nhân, xác minh bối cảnh, đóng hồ sơ |
+| Vận hành | Công việc theo bộ phận | Quản lý công việc |
+| Phân tích | Bản đồ liên kết | Xem sơ đồ quan hệ máy/công đoạn/vật tư/dữ liệu |
+| Phân tích | Phân tích tác động | Chạy phân tích và xem kết quả |
+| Phân tích | Kịch bản mô phỏng | Nạp dữ liệu demo, thử tình huống |
+| Thiết lập dữ liệu | Danh mục sản xuất | Thêm/sửa bộ phận, chuyền, công đoạn, máy, vật tư... |
+| Thiết lập dữ liệu | Nguồn dữ liệu & ánh xạ | Khai báo hệ thống MES/ERP, dataset, trường, luồng |
+| Thiết lập dữ liệu | Khảo sát & xác nhận | Ghi các câu hỏi cần xác nhận với nhà máy |
+| Thiết lập dữ liệu | Tài khoản & quyền | Quản lý tài khoản (chỉ ADMIN) |
 
 > Dữ liệu demo có nhãn **"Dữ liệu mô phỏng — chưa xác nhận bởi Denso"**, không trộn với dữ liệu thật.
 

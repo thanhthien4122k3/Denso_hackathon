@@ -29,7 +29,8 @@ class TaskService:
                 if value not in STATUSES:
                     raise ValidationFailedError(f"status phải thuộc {sorted(STATUSES)}.")
                 cleaned[name] = value
-            elif name in ("department_id", "source_incident_id", "source_analysis_run_id"):
+            elif name in ("department_id", "source_incident_id", "source_analysis_run_id",
+                          "analysis_action_id"):
                 if value is None:
                     continue
                 if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
@@ -52,6 +53,23 @@ class TaskService:
         cleaned.setdefault("status", "TODO")
         cleaned.setdefault("is_simulated", False)
         return self.repository.create(cleaned)
+
+    def create_from_action(self, data):
+        """Tạo công việc từ một đề xuất (analysis_action_id); không tạo trùng."""
+        if not isinstance(data, dict):
+            raise ValidationFailedError("Dữ liệu phải là đối tượng JSON.")
+        action_id = data.get("analysis_action_id")
+        if action_id is None:
+            raise ValidationFailedError("analysis_action_id là bắt buộc.")
+        existing = self.repository.find_by_analysis_action(action_id)
+        if existing is not None:
+            return existing, False
+        cleaned = self._clean(data, partial=False)
+        if not cleaned.get("title"):
+            raise ValidationFailedError("title là bắt buộc.")
+        cleaned.setdefault("status", "TODO")
+        cleaned.setdefault("is_simulated", False)
+        return self.repository.create(cleaned), True
 
     def update(self, task_id, data):
         if self.repository.get(task_id) is None:

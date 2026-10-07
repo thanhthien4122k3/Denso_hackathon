@@ -40,10 +40,13 @@ def traverse(
             visited.add((ntype, nid))
             step = _step(node_type, node_id, edge)
             new_path = path + [step]
+            depth_kind = "DIRECT" if depth == 0 else "INDIRECT"
             impacts[(ntype, nid)] = {
                 "node_type": ntype,
                 "node_id": nid,
-                "impact_type": "DIRECT" if depth == 0 else "INDIRECT",
+                "impact_type": depth_kind,
+                "relation_depth": depth_kind,
+                "evidence_status": "POTENTIAL",
                 "path": new_path,
                 "edge_kind": edge["kind"],
             }
@@ -66,6 +69,8 @@ def traverse(
                 "node_type": ntype,
                 "node_id": nid,
                 "impact_type": "RISK",
+                "relation_depth": None,
+                "evidence_status": "POTENTIAL",
                 "path": base_path + [step],
                 "edge_kind": edge["kind"],
             }
@@ -116,3 +121,30 @@ def select_hypotheses(hypotheses: list[dict], signals: dict) -> list[dict]:
         if evaluate_condition(hyp.get("condition", {}), signals):
             selected.append(hyp)
     return selected
+
+
+def match_past_incidents(current: dict, past: list[dict]) -> list[dict]:
+    """Tìm sự cố cũ tương tự theo tiêu chí đơn giản, có giải thích tiêu chí khớp.
+
+    current: {incident_type, source_object_type, source_object_id, ...}
+    past: danh sách sự cố cũ {id, code, incident_type, machine_id, error_code, ...}
+    Trả về danh sách {incident_id, code, matched_criteria: [..]}.
+    """
+    matches = []
+    for p in past:
+        criteria = []
+        if current.get("incident_type") and p.get("incident_type") == current["incident_type"]:
+            criteria.append("cùng loại sự cố")
+        if (current.get("source_object_type") == "machine"
+                and p.get("machine_id") and p["machine_id"] == current.get("source_object_id")):
+            criteria.append("cùng máy")
+        cur_code = (current.get("error_code") or "").strip()
+        if cur_code and p.get("error_code") and p["error_code"] == cur_code:
+            criteria.append("cùng mã lỗi")
+        if criteria:
+            matches.append({
+                "incident_id": p.get("id"),
+                "code": p.get("code"),
+                "matched_criteria": criteria,
+            })
+    return matches

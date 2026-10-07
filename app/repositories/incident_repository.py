@@ -10,6 +10,8 @@ _INCIDENT_COLS = [
     "code", "title", "incident_type", "source_object_type", "source_object_id",
     "start_time", "end_time", "severity", "description", "status",
     "assigned_department_id", "request_id", "is_simulated",
+    "recovered_at", "recovered_by", "closed_at", "closed_by",
+    "resolution_summary", "root_cause_status",
 ]
 
 
@@ -62,6 +64,12 @@ class IncidentRepository:
     def get(self, incident_id):
         with self._conn() as conn, conn.cursor() as cur:
             cur.execute("SELECT * FROM production.incidents WHERE id = %(id)s", {"id": incident_id})
+            return cur.fetchone()
+
+    @_db_errors
+    def get_by_code(self, code):
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT * FROM production.incidents WHERE code = %(code)s", {"code": code})
             return cur.fetchone()
 
     @_db_errors

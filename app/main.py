@@ -8,6 +8,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
+from app.auth import auth_middleware
 from app.engine.rules import load_rules
 from app.exceptions import (
     DatabaseUnavailableError,
@@ -22,7 +23,9 @@ from app.query_loader import load_all
 from app.repositories.production_repository import ProductionRepository
 from app.routers import (
     analysis,
+    auth,
     catalog,
+    context,
     dashboard,
     graph,
     health,
@@ -89,6 +92,8 @@ app = FastAPI(
     redoc_url=None,
 )
 
+app.middleware("http")(auth_middleware)
+
 
 @app.exception_handler(DatabaseUnavailableError)
 async def database_unavailable_handler(request: Request, exc: DatabaseUnavailableError):
@@ -126,6 +131,7 @@ async def validation_failed_handler(request: Request, exc: ValidationFailedError
     return JSONResponse(status_code=422, content={"success": False, "message": str(exc), "data": None})
 
 
+app.include_router(auth.router)
 app.include_router(production.router)
 app.include_router(health.router)
 app.include_router(dashboard.router)
@@ -136,6 +142,7 @@ app.include_router(operations.router)
 app.include_router(incidents.router)
 app.include_router(analysis.router)
 app.include_router(tasks.router)
+app.include_router(context.router)
 app.include_router(scenarios.scenarios_router)
 app.include_router(scenarios.survey_router)
 

@@ -75,6 +75,28 @@ class OperationsService:
         }
         return self.repository.create_downtime(cleaned)
 
+    def report_machine_error(self, data):
+        """Báo lỗi máy: tạo trạng thái STOPPED và khoảng dừng đang mở nhất quán."""
+        if not isinstance(data, dict):
+            raise ValidationFailedError("Dữ liệu phải là đối tượng JSON.")
+        machine_id = data.get("machine_id")
+        if not machine_id:
+            raise ValidationFailedError("machine_id là bắt buộc.")
+        self._require_entity("machine", machine_id, "Máy")
+        event_time = _dt(data.get("event_time"))
+        cleaned = {
+            "machine_id": machine_id,
+            "event_time": event_time,
+            "state": "STOPPED",
+            "error_code": (data.get("error_code") or "").strip() or None,
+            "note": (data.get("note") or data.get("observation") or "").strip() or None,
+            "start_time": event_time,
+            "reason": (data.get("observation") or data.get("reason") or "").strip() or None,
+            "operator_name": (data.get("operator_name") or "").strip() or None,
+            "is_simulated": bool(data.get("is_simulated", False)),
+        }
+        return self.repository.report_machine_error(cleaned)
+
     def close_downtime(self, downtime_id, end_time):
         return self.repository.update_downtime_end(downtime_id, _dt(end_time))
 

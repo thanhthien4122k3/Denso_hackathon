@@ -15,11 +15,11 @@ def dt(iso: str) -> datetime:
 
 
 DEPARTMENTS = [
-    {"code": "MAINTENANCE", "name": "Bảo trì"},
+    {"code": "MAINT", "name": "Bảo trì"},
     {"code": "QC", "name": "Kiểm tra chất lượng"},
-    {"code": "WAREHOUSE", "name": "Kho"},
-    {"code": "PLANNING", "name": "Kế hoạch sản xuất"},
-    {"code": "IT_DATA", "name": "IT/Data"},
+    {"code": "WH", "name": "Kho"},
+    {"code": "PLAN", "name": "Kế hoạch sản xuất"},
+    {"code": "DATA", "name": "IT/Data"},
 ]
 
 LINES = [{"code": "LINE-01", "name": "Chuyền lắp ráp"}]
@@ -68,8 +68,8 @@ def build_edges(ids: dict) -> list[dict]:
         ("order", "ORD-001", "product", "PROD-001", "Lệnh sản xuất cho sản phẩm"),
         ("lot", "LOT-001", "order", "ORD-001", "Lot thuộc lệnh sản xuất"),
         # department_responsibility
-        ("department", "MAINTENANCE", "machine", "M-01", "Bộ phận chịu trách nhiệm"),
-        ("department", "MAINTENANCE", "machine", "M-02", "Bộ phận chịu trách nhiệm"),
+        ("department", "MAINT", "machine", "M-01", "Bộ phận chịu trách nhiệm"),
+        ("department", "MAINT", "machine", "M-02", "Bộ phận chịu trách nhiệm"),
         ("department", "QC", "process", "TEST-01", "Bộ phận chịu trách nhiệm"),
     ]
     kind_map = {
@@ -162,7 +162,7 @@ INCIDENTS = [
      "source_object_type": "machine", "source_object_code": "M-01",
      "start_time": "2026-09-26T08:00:00+07:00", "end_time": "2026-09-26T08:30:00+07:00",
      "severity": "HIGH", "description": "Máy M-01 dừng đột ngột, mã lỗi E-101.",
-     "status": "OPEN", "department_code": "MAINTENANCE"},
+     "status": "OPEN", "department_code": "MAINT"},
     {"code": "INC-002", "title": "Lot có tỷ lệ lỗi QC cao", "incident_type": "QUALITY",
      "source_object_type": "lot", "source_object_code": "LOT-001",
      "start_time": "2026-09-26T10:00:00+07:00", "severity": "HIGH",
@@ -172,5 +172,5 @@ INCIDENTS = [
      "source_object_type": "material", "source_object_code": "MAT-100",
      "start_time": "2026-09-26T09:00:00+07:00", "severity": "HIGH",
      "description": "Vật tư MAT-100 còn 30 pcs, thấp hơn ngưỡng.",
-     "status": "OPEN", "department_code": "WAREHOUSE"},
+     "status": "OPEN", "department_code": "WH"},
 ]

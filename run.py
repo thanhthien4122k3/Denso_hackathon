@@ -19,10 +19,12 @@ def main() -> None:
     import uvicorn
 
     settings = get_settings()
+    # Host hiển thị cho người dùng mở trình duyệt (0.0.0.0 chỉ là địa chỉ bind).
+    browser_host = "localhost" if settings.app_host in ("0.0.0.0", "::", "") else settings.app_host
     print("=" * 60)
     print("Denso Production Input")
-    print(f"  Trang giao diện : http://{settings.app_host}:{settings.app_port}")
-    print(f"  Tài liệu API     : http://{settings.app_host}:{settings.app_port}/docs")
+    print(f"  Trang giao diện : http://{browser_host}:{settings.app_port}")
+    print(f"  Tài liệu API     : http://{browser_host}:{settings.app_port}/docs")
     print("=" * 60)
 
     uvicorn.run(

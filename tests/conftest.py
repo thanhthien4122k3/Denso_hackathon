@@ -69,4 +69,21 @@ def client(test_db):
     from app.main import app
 
     with TestClient(app) as c:
+        _ensure_admin(c)
         yield c
+
+
+def _ensure_admin(client, username="admin", password="admin-test-password"):
+    """Tạo tài khoản admin (nếu chưa có) và đăng nhập để mọi request có phiên hợp lệ."""
+    from app.services.auth_service import AuthService
+
+    svc = AuthService()
+    if svc.repository.find_by_username(username) is None:
+        svc.create_user(username, "Admin Test", password, ["ADMIN"], is_simulated=False)
+    client.post("/api/auth/login", json={"username": username, "password": password})
+
+
+@pytest.fixture(scope="session")
+def login_as_admin():
+    """Helper đăng nhập lại (dùng sau khi fixture truncate xóa user)."""
+    return _ensure_admin
