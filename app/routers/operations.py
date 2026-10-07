@@ -51,6 +51,12 @@ def create_downtime(payload: dict, service: OperationsService = Depends(get_serv
     return {"success": True, "message": "Đã ghi nhận.", "data": service.create_downtime(payload)}
 
 
+@router.post("/report-machine-error", status_code=201)
+def report_machine_error(payload: dict, service: OperationsService = Depends(get_service)):
+    return {"success": True, "message": "Đã ghi nhận sự cố máy.",
+            "data": service.report_machine_error(payload)}
+
+
 @router.post("/downtimes/{downtime_id}/close")
 def close_downtime(downtime_id: int, payload: dict, service: OperationsService = Depends(get_service)):
     return {"success": True, "message": "Đã đóng.", "data": service.close_downtime(downtime_id, payload.get("end_time"))}

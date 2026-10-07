@@ -1,15 +1,33 @@
 """API quản lý sự cố, nguyên nhân và liên kết bản ghi vận hành."""
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 
+from app.auth import current_user
+from app.repositories.context_repository import ContextRepository
+from app.services.context_verification_service import ContextVerificationService
 from app.services.incident_service import IncidentService
 from app.settings import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 
 router = APIRouter(prefix="/api/incidents", tags=["incidents"])
 
 
+def _require_role(request: Request, allowed: tuple):
+    roles = set(getattr(request.state, "roles", []))
+    if "ADMIN" in roles or roles & set(allowed):
+        return
+    raise HTTPException(status_code=403, detail="Không có quyền thực hiện hành động này.")
+
+
 def get_service() -> IncidentService:
     return IncidentService()
+
+
+def get_context_service() -> ContextVerificationService:
+    return ContextVerificationService()
+
+
+def get_context_repo() -> ContextRepository:
+    return ContextRepository()
 
 
 def _page(page, page_size, total):
@@ -27,8 +45,12 @@ def list_incidents(page: int = Query(1, ge=1), page_size: int = Query(DEFAULT_PA
 
 @router.post("", status_code=201)
 def create_incident(payload: dict, response: Response,
-                    service: IncidentService = Depends(get_service)):
+                    service: IncidentService = Depends(get_service),
+                    user: dict = Depends(current_user),
+                    ctx: ContextRepository = Depends(get_context_repo)):
     row, created = service.create(payload)
+    if created:
+        ctx.add_history(row["id"], "CREATED", user["username"], {"code": row.get("code")})
     if not created:
         response.status_code = 200
     return {"success": True,
@@ -45,8 +67,17 @@ def get_incident(incident_id: int, service: IncidentService = Depends(get_servic
 
 
 @router.put("/{incident_id}")
-def update_incident(incident_id: int, payload: dict, service: IncidentService = Depends(get_service)):
-    return {"success": True, "message": "Đã cập nhật.", "data": service.update(incident_id, payload)}
+def update_incident(incident_id: int, payload: dict,
+                    request: Request,
+                    service: IncidentService = Depends(get_service),
+                    user: dict = Depends(current_user),
+                    ctx: ContextRepository = Depends(get_context_repo)):
+    closing = payload.get("status") == "RESOLVED" or "closed_at" in payload
+    if closing:
+        _require_role(request, ("COORDINATOR",))
+    row = service.update(incident_id, payload)
+    ctx.add_history(incident_id, "UPDATED", user["username"], {"status": payload.get("status")})
+    return {"success": True, "message": "Đã cập nhật.", "data": row}
 
 
 # causes
@@ -56,8 +87,16 @@ def list_causes(incident_id: int, service: IncidentService = Depends(get_service
 
 
 @router.post("/{incident_id}/causes", status_code=201)
-def create_cause(incident_id: int, payload: dict, service: IncidentService = Depends(get_service)):
-    return {"success": True, "message": "Đã thêm.", "data": service.create_cause(incident_id, payload)}
+def create_cause(incident_id: int, payload: dict, request: Request,
+                 service: IncidentService = Depends(get_service),
+                 user: dict = Depends(current_user),
+                 ctx: ContextRepository = Depends(get_context_repo)):
+    if payload.get("kind") == "CONFIRMED":
+        _require_role(request, ("COORDINATOR",))
+    row = service.create_cause(incident_id, payload)
+    ctx.add_history(incident_id, "CAUSE_" + str(payload.get("kind", "HYPOTHESIS")),
+                    user["username"], {"content": payload.get("content")})
+    return {"success": True, "message": "Đã thêm.", "data": row}
 
 
 @router.put("/causes/{cause_id}")
@@ -86,3 +125,57 @@ def create_link(incident_id: int, payload: dict, service: IncidentService = Depe
 def delete_link(link_id: int, service: IncidentService = Depends(get_service)):
     service.delete_link(link_id)
     return {"success": True, "message": "Đã xóa.", "data": None}
+
+
+# ---- bối cảnh sản xuất cần xác minh ----
+@router.get("/{incident_id}/context")
+def get_context(incident_id: int,
+                service: ContextVerificationService = Depends(get_context_service)):
+    return {"success": True, "message": "OK", "data": service.get_context(incident_id)}
+
+
+@router.post("/{incident_id}/context/verify", status_code=201)
+def verify_context(incident_id: int, payload: dict, request: Request,
+                   service: ContextVerificationService = Depends(get_context_service),
+                   user: dict = Depends(current_user),
+                   ctx: ContextRepository = Depends(get_context_repo)):
+    _require_role(request, ("COORDINATOR",))
+    row = service.verify(incident_id, payload.get("operation_ids"), payload.get("reason"),
+                         payload.get("evidence"), user)
+    ctx.add_history(incident_id, "CONTEXT_VERIFIED", user["username"],
+                    {"operation_ids": payload.get("operation_ids"), "reason": payload.get("reason")})
+    return {"success": True, "message": "Đã xác minh bối cảnh.", "data": row}
+
+
+# ---- khôi phục và đóng hồ sơ ----
+@router.post("/{incident_id}/recover")
+def recover(incident_id: int, payload: dict, request: Request,
+            service: IncidentService = Depends(get_service),
+            user: dict = Depends(current_user),
+            ctx: ContextRepository = Depends(get_context_repo)):
+    _require_role(request, ("COORDINATOR",))
+    row = service.update(incident_id, {
+        "recovered_at": payload.get("recovered_at"),
+        "recovered_by": payload.get("recovered_by") or user["username"],
+        "status": payload.get("status", "MITIGATING"),
+    })
+    ctx.add_history(incident_id, "RECOVERED", user["username"], {"recovered_at": payload.get("recovered_at")})
+    return {"success": True, "message": "Đã xác nhận khôi phục.", "data": row}
+
+
+@router.post("/{incident_id}/close")
+def close(incident_id: int, payload: dict, request: Request,
+          service: IncidentService = Depends(get_service),
+          user: dict = Depends(current_user),
+          ctx: ContextRepository = Depends(get_context_repo)):
+    _require_role(request, ("COORDINATOR",))
+    row = service.update(incident_id, {
+        "status": "RESOLVED",
+        "closed_at": payload.get("closed_at"),
+        "closed_by": payload.get("closed_by") or user["username"],
+        "resolution_summary": payload.get("resolution_summary"),
+        "root_cause_status": payload.get("root_cause_status", "UNKNOWN"),
+    })
+    ctx.add_history(incident_id, "CLOSED", user["username"],
+                    {"resolution_summary": payload.get("resolution_summary")})
+    return {"success": True, "message": "Đã đóng hồ sơ.", "data": row}
