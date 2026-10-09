@@ -128,9 +128,11 @@ class DashboardService:
         incidents = self._query_all(
             "SELECT i.id, i.code, i.title, i.incident_type, i.severity, i.status,"
             " i.start_time, i.source_object_type, i.source_object_id, i.is_simulated,"
-            " d.name AS department_name"
+            " d.name AS department_name, r.affected_count, r.task_count, r.departments AS report_departments"
             " FROM production.incidents i"
-            " LEFT JOIN production.departments d ON d.id = i.assigned_department_id" + inc_list_where +
+            " LEFT JOIN production.departments d ON d.id = i.assigned_department_id"
+            " LEFT JOIN production.incident_reports r ON r.incident_id = i.id"
+            + inc_list_where +
             " ORDER BY CASE i.severity WHEN 'CRITICAL' THEN 0 WHEN 'HIGH' THEN 1"
             "   WHEN 'MEDIUM' THEN 2 ELSE 3 END, i.start_time DESC NULLS LAST"
             " LIMIT 10",

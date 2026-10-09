@@ -28,6 +28,8 @@ def _clean(spec: dict, data) -> dict:
             if maxlen and len(value) > maxlen:
                 raise ValidationFailedError(f"{name} tối đa {maxlen} ký tự.")
         elif ftype == "int":
+            if isinstance(value, str) and value.isdigit():
+                value = int(value)
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
                 raise ValidationFailedError(f"{name} phải là số nguyên dương.")
         elif ftype == "bool":

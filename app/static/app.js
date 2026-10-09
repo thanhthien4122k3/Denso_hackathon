@@ -203,6 +203,7 @@
         form.appendChild(fs);
         lastGroup = f.group;
       }
+      if (!f.name) return;
       let control;
       if (f.type === "select") control = selectInput(f.name, f.options || [], initial && initial[f.name]);
       else if (f.type === "checkbox") control = h("input", { name: f.name, type: "checkbox", checked: initial ? !!initial[f.name] : !!f.default });
@@ -222,9 +223,10 @@
       e.preventDefault();
       const data = {};
       fields.forEach((f) => {
+        if (!f.name) return;
         const c = controls[f.name];
         let v = c.type === "checkbox" ? c.checked : (c.value === "" ? null : c.value);
-        if (f.type === "number" && v !== null) v = Number(v);
+        if ((f.type === "number" || f.name === "assigned_department_id") && v !== null) v = Number(v);
         data[f.name] = v;
       });
       onSubmit(data, submit);
@@ -254,7 +256,7 @@
     return CATALOG_KEYS;
   }
   async function loadOptions(key) {
-    const d = await api("/api/catalog/" + key + "?page_size=200");
+    const d = await api("/api/catalog/" + key + "?page_size=100");
     return d.data.items.map((r) => ({ value: r.id, label: r.name, code: r.code }));
   }
   const CATALOG_EXTRA = {
@@ -423,7 +425,7 @@
       } catch (e) { listWrap.textContent = ""; listWrap.appendChild(errorBox(e.message, load)); }
     }
     async function datasetForm(row) {
-      const srcs = (await api("/api/system/sources?page_size=200")).data.items.map(r => ({ value: r.id, label: r.code, code: r.code }));
+      const srcs = (await api("/api/system/sources?page_size=100")).data.items.map(r => ({ value: r.id, label: r.code, code: r.code }));
       const depts = await loadOptions("department");
       const fields = [
         { name: "code", label: "Mã", required: true }, { name: "name", label: "Tên", required: true },
@@ -449,7 +451,7 @@
   }
   async function viewFields(body) {
     const toolbar = h("div", { class: "toolbar" }); const listWrap = h("div");
-    const datasets = (await api("/api/system/datasets?page_size=200")).data.items;
+    const datasets = (await api("/api/system/datasets?page_size=100")).data.items;
     const sel = selectInput("ds", datasets.map(r => ({ value: r.id, label: r.code })), datasets[0] && datasets[0].id);
     toolbar.appendChild(field("Dataset", sel));
     toolbar.appendChild(h("button", { class: "btn btn-primary", text: "Thêm trường", onclick: () => fieldForm(sel.value) }));
@@ -493,7 +495,7 @@
       ], d.data.items, (row) => h("td", {}, [h("button", { class: "btn btn-sm btn-ghost", text: "Xóa", onclick: () => { if (confirm("Xóa?")) api("/api/system/flows/" + row.id, { method: "DELETE" }).then(() => { toast("Đã xóa."); load(); }).catch(e => toast(e.message, "error")); } })]));
     }
     async function flowForm(row) {
-      const datasets = (await api("/api/system/datasets?page_size=200")).data.items;
+      const datasets = (await api("/api/system/datasets?page_size=100")).data.items;
       const opts = datasets.map(r => ({ value: r.id, label: r.code, code: r.code }));
       const fields = [
         { name: "code", label: "Mã", required: true }, { name: "name", label: "Tên", required: true },
@@ -1350,7 +1352,9 @@
       const wrap = h("div");
       renderTable(wrap, [
         { key: "code", label: "Mã" }, { key: "title", label: "Tiêu đề" }, { key: "severity", label: "Mức", render: (r) => severityBadge(r.severity) },
-        { key: "department_name", label: "Bộ phận" }, { key: "start_time", label: "Bắt đầu", render: (r) => r.start_time ? fmtDate(r.start_time) : "—" },
+        { key: "department_name", label: "Bộ phận" }, 
+        { key: "impact", label: "Tác động", render: (r) => r.affected_count != null ? badge(`${r.affected_count} entity, ${r.task_count} tasks`, "blue") : "—" },
+        { key: "start_time", label: "Bắt đầu", render: (r) => r.start_time ? fmtDate(r.start_time) : "—" },
       ], incidents, null, (row) => navigate("incidents/" + row.id));
       incCard.appendChild(wrap);
     }

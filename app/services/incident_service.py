@@ -68,6 +68,8 @@ class IncidentService:
             raise ValidationFailedError("source_object_id là bắt buộc khi có source_object_type.")
 
         assigned = data.get("assigned_department_id")
+        if isinstance(assigned, str) and assigned.isdigit():
+            assigned = int(assigned)
         if assigned is not None and not self.catalog.exists("department", assigned):
             raise ValidationFailedError("Bộ phận phụ trách không tồn tại.")
 
@@ -124,8 +126,11 @@ class IncidentService:
                 raise ValidationFailedError(f"status phải thuộc {sorted(STATUSES)}.")
             if ftype == "dt":
                 value = _dt(value)
-            elif ftype == "int" and (isinstance(value, bool) or not isinstance(value, int)):
-                raise ValidationFailedError(f"{field} phải là số nguyên.")
+            elif ftype == "int":
+                if isinstance(value, str) and value.isdigit():
+                    value = int(value)
+                if isinstance(value, bool) or not isinstance(value, int):
+                    raise ValidationFailedError(f"{field} phải là số nguyên.")
             elif ftype == "str" and value is not None:
                 value = value.strip() or None
             allowed[field] = value

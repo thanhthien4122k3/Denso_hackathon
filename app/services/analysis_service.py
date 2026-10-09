@@ -80,33 +80,16 @@ class AnalysisService:
         for rule in matched:
             propagate.update(rule.get("propagate_kinds", []))
 
-        signals = {"has_machine_stop": incident_type == "MACHINE_STOP",
-                   "has_error_code": False, "qc_fail": False, "low_material": False,
-                   "dataset_delay": incident_type == "DATA_DELAY",
-                   "defect_rate": None, "material_available": None}
-        if source_type == "machine" and source_id:
-            err = self.operations.latest_downtime_error(source_id)
-            signals["has_error_code"] = bool(err)
-        if source_type == "lot" and source_id:
-            qc = self.operations.latest_qc(source_id)
-            if qc and qc["inspected_qty"]:
-                signals["qc_fail"] = qc["defect_qty"] > 0
-                signals["defect_rate"] = round(qc["defect_qty"] / qc["inspected_qty"] * 100, 2)
-        if source_type == "material" and source_id:
-            ms = self.operations.latest_material_available(source_id)
-            if ms:
-                avail = float(ms["available_qty"])
-                signals["material_available"] = avail
-                signals["low_material"] = avail < MATERIAL_LOW_THRESHOLD
-        if incident_type == "QUALITY":
-            signals["qc_fail"] = True
-        if incident_type == "MATERIAL_SHORTAGE":
-            signals["low_material"] = True
+        signals = self._signals({
+            "incident_type": incident_type,
+            "source_object_type": source_type,
+            "source_object_id": source_id,
+        })
 
         edges = self.graph.all_edges()
         impacts = []
         if source_id is not None:
-            impacts = (edges, source_type, source_id, propagate, max_depth)
+            impacts = traverse(edges, source_type, source_id, propagate, max_depth)
 
         dept_map = self._department_map()
         rule_assumptions = " ".join(r.get("assumptions", "") for r in matched).strip()

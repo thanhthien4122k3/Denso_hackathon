@@ -32,6 +32,8 @@ class TaskService:
             elif name in ("department_id", "source_incident_id", "source_analysis_run_id"):
                 if value is None:
                     continue
+                if isinstance(value, str) and value.isdigit():
+                    value = int(value)
                 if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
                     raise ValidationFailedError(f"{name} phải là số nguyên dương.")
                 cleaned[name] = value

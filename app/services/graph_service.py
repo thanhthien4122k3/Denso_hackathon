@@ -34,6 +34,8 @@ class GraphService:
             if value is None or value == "":
                 continue
             if ftype == "int":
+                if isinstance(value, str) and value.isdigit():
+                    value = int(value)
                 if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
                     raise ValueError(f"{name} phải là số nguyên dương.")
             elif ftype == "bool":

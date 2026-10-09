@@ -1,4 +1,4 @@
-﻿"""Nghiệp vụ danh mục: kiểm tra dữ liệu, tham chiếu và CRUD chung."""
+"""Nghiệp vụ danh mục: kiểm tra dữ liệu, tham chiếu và CRUD chung."""
 
 from app.catalog import all_fields, get_entity
 from app.exceptions import ValidationFailedError
@@ -36,6 +36,8 @@ class CatalogService:
                 if fs.max_length and len(value) > fs.max_length:
                     raise ValidationFailedError(f"{fs.label} tối đa {fs.max_length} ký tự.")
             elif fs.type == "int":
+                if isinstance(value, str) and value.isdigit():
+                    value = int(value)
                 if isinstance(value, bool) or not isinstance(value, int):
                     raise ValidationFailedError(f"{fs.label} phải là số nguyên.")
                 if value <= 0:
