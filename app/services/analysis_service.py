@@ -201,6 +201,9 @@ class AnalysisService:
         )
         result["run_id"] = run["id"]
         result["run_at"] = run["run_at"]
+        result["source_type"] = "INCIDENT"
+        result["source_id"] = incident_id
+        result["source_incident_id"] = incident_id
         return result
 
     def run_whatif(self, incident_type, source_type, source_id, max_depth=3,

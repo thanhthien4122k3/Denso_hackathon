@@ -830,8 +830,9 @@
     v.appendChild(back);
 
     const steps = ["Tạo", "Bằng chứng", "Phân tích", "Công việc", "Giải quyết"];
+    const activeStepIdx = { OPEN: 0, INVESTIGATING: 1, MITIGATING: 2, RESOLVED: 4 }[inc.status] ?? 0;
     const stepper = h("div", { class: "tabs", style: "margin-top:12px;" });
-    steps.forEach((s, i) => stepper.appendChild(h("button", { text: (i + 1) + ". " + s, disabled: true })));
+    steps.forEach((s, i) => stepper.appendChild(h("button", { text: (i + 1) + ". " + s, class: i === activeStepIdx ? "active" : "", disabled: true })));
     v.appendChild(stepper);
 
     const grid = h("div", { class: "detail-grid" });
@@ -855,28 +856,75 @@
 
     // causes
     const causeCard = h("div", { class: "card" });
-    causeCard.appendChild(h("div", { class: "card-title" }, [h("span", { text: "Nguyên nhân" })]));
+    const addCauseBtn = h("button", { class: "btn btn-outline btn-sm", text: "+ Ghi nhận nguyên nhân", onclick: () => causeForm() });
+    causeCard.appendChild(h("div", { class: "card-title" }, [h("span", { text: "Nguyên nhân" }), addCauseBtn]));
     const causeWrap = h("div");
     function renderCauses() {
       causeWrap.textContent = "";
       if (!causes.length) causeWrap.appendChild(emptyBox("survey", "Chưa có nguyên nhân", "Giả thuyết sẽ xuất hiện sau khi chạy phân tích; nguyên nhân xác nhận do bạn ghi."));
       causes.forEach((c) => causeWrap.appendChild(h("div", { class: "explain" }, [
-        h("div", {}, [c.kind === "CONFIRMED" ? badge("Đã xác nhận", "green") : badge("Giả thuyết", "amber"), c.rule_id ? h("span", { style: "font-size:12px;color:var(--c-text-faint);margin-left:8px;", text: "rule " + c.rule_id }) : null]),
+        h("div", { style: "display:flex;justify-content:space-between;align-items:center;" }, [
+          h("div", {}, [c.kind === "CONFIRMED" ? badge("Đã xác nhận", "green") : badge("Giả thuyết", "amber"), c.rule_id ? h("span", { style: "font-size:12px;color:var(--c-text-faint);margin-left:8px;", text: "rule " + c.rule_id }) : null]),
+          h("button", { class: "btn btn-ghost btn-sm", style: "color:var(--c-danger);padding:2px 6px;", text: "Xóa", onclick: async () => {
+            try { await api("/api/incidents/causes/" + c.id, { method: "DELETE" }); toast("Đã xóa nguyên nhân."); causes = (await api("/api/incidents/" + id + "/causes")).data; renderCauses(); }
+            catch (e) { toast(e.message, "error"); }
+          } }),
+        ]),
         h("div", { text: c.content, style: "margin-top:6px;" }),
         c.evidence ? h("div", { class: "cell-sub", text: "Bằng chứng: " + c.evidence }) : null,
         (c.kind === "CONFIRMED" && c.confirmed_by) ? h("div", { class: "cell-sub", text: "Xác nhận bởi: " + c.confirmed_by }) : null,
       ])));
+    }
+    function causeForm() {
+      const fields = [
+        { name: "content", label: "Nội dung nguyên nhân", type: "textarea", required: true },
+        { name: "kind", label: "Loại nguyên nhân", type: "select", options: [{ value: "CONFIRMED", label: "Xác nhận" }, { value: "HYPOTHESIS", label: "Giả thuyết" }] },
+        { name: "evidence", label: "Bằng chứng / Ghi chú", type: "textarea" },
+        { name: "confirmed_by", label: "Người xác nhận", type: "text" },
+      ];
+      const fb = formBuilder(fields, async (data, s) => {
+        fb.setSubmitting(true);
+        try {
+          await api("/api/incidents/" + id + "/causes", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) });
+          closeModal(); toast("Đã thêm nguyên nhân."); causes = (await api("/api/incidents/" + id + "/causes")).data; renderCauses();
+        } catch (e) { toast(e.message, "error"); fb.setSubmitting(false); }
+      });
+      openModal("Ghi nhận nguyên nhân", fb.form);
     }
     renderCauses(); causeCard.appendChild(causeWrap);
     left.appendChild(causeCard);
 
     // links (evidence)
     const linkCard = h("div", { class: "card" });
-    linkCard.appendChild(h("div", { class: "card-title" }, [h("span", { text: "Bằng chứng (bản ghi vận hành)" })]));
+    const addLinkBtn = h("button", { class: "btn btn-outline btn-sm", text: "+ Liên kết bản ghi", onclick: () => linkForm() });
+    linkCard.appendChild(h("div", { class: "card-title" }, [h("span", { text: "Bằng chứng (bản ghi vận hành)" }), addLinkBtn]));
     const linkWrap = h("div");
-    if (!links.length) linkWrap.appendChild(h("p", { class: "cell-sub", text: "Chưa liên kết bản ghi vận hành nào." }));
-    else links.forEach((l) => linkWrap.appendChild(h("div", { class: "explain" }, [h("div", { text: l.source_type + " #" + l.source_id })])));
-    linkCard.appendChild(linkWrap);
+    function renderLinks() {
+      linkWrap.textContent = "";
+      if (!links.length) linkWrap.appendChild(h("p", { class: "cell-sub", text: "Chưa liên kết bản ghi vận hành nào." }));
+      else links.forEach((l) => linkWrap.appendChild(h("div", { class: "explain", style: "display:flex;justify-content:space-between;align-items:center;" }, [
+        h("div", { text: l.source_type + " #" + l.source_id }),
+        h("button", { class: "btn btn-ghost btn-sm", style: "color:var(--c-danger);padding:2px 6px;", text: "Xóa", onclick: async () => {
+          try { await api("/api/incidents/links/" + l.id, { method: "DELETE" }); toast("Đã xóa liên kết."); links = (await api("/api/incidents/" + id + "/links")).data; renderLinks(); }
+          catch (e) { toast(e.message, "error"); }
+        } }),
+      ])));
+    }
+    function linkForm() {
+      const fields = [
+        { name: "source_type", label: "Loại bản ghi", type: "select", options: ["machine_state", "downtime", "qc", "material_status", "production_record"].map(x => ({ value: x, label: x })), required: true },
+        { name: "source_id", label: "ID bản ghi", type: "number", required: true },
+      ];
+      const fb = formBuilder(fields, async (data, s) => {
+        fb.setSubmitting(true);
+        try {
+          await api("/api/incidents/" + id + "/links", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...data, source_id: Number(data.source_id) }) });
+          closeModal(); toast("Đã liên kết bản ghi."); links = (await api("/api/incidents/" + id + "/links")).data; renderLinks();
+        } catch (e) { toast(e.message, "error"); fb.setSubmitting(false); }
+      });
+      openModal("Liên kết bản ghi vận hành", fb.form);
+    }
+    renderLinks(); linkCard.appendChild(linkWrap);
     left.appendChild(linkCard);
 
     // right: actions + run analysis + history
