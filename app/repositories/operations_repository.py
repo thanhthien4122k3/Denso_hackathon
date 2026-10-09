@@ -144,6 +144,37 @@ class OperationsRepository:
             row = cur.fetchone()
             return row["error_code"] if row else None
 
+    # ---- báo lỗi máy nhất quán: trạng thái STOPPED + khoảng dừng mở ----
+    @_db_errors
+    def report_machine_error(self, data):
+        """Ghi đồng thời một sự kiện trạng thái và một khoảng dừng đang mở.
+
+        Dùng chung transaction để không tạo hai khoảng dừng trùng lặp.
+        """
+        state_cols = ["machine_id", "event_time", "state", "error_code", "note", "is_simulated"]
+        state_data = {c: data.get(c) for c in state_cols if c in data}
+        state_data.setdefault("state", "STOPPED")
+        downtime_cols = ["machine_id", "start_time", "reason", "error_code",
+                         "operator_name", "is_simulated"]
+        downtime_data = {c: data.get(c) for c in downtime_cols if c in data}
+        downtime_data.setdefault("start_time", data.get("event_time"))
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO production.machine_states (" + ", ".join(state_data)
+                + ") VALUES (" + ", ".join(f"%({c})s" for c in state_data) + ") RETURNING *",
+                state_data,
+            )
+            state = cur.fetchone()
+            cur.execute(
+                "INSERT INTO production.machine_downtimes (" + ", ".join(downtime_data)
+                + ") VALUES (" + ", ".join(f"%({c})s" for c in downtime_data) + ") RETURNING *",
+                downtime_data,
+            )
+            downtime = cur.fetchone()
+            conn.commit()
+        return {"state": state, "downtime": downtime}
+
+
     @_db_errors
     def latest_qc(self, lot_id):
         with self._conn() as conn, conn.cursor() as cur:

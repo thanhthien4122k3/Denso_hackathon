@@ -99,13 +99,17 @@ class AnalysisRepository:
             for item in impacts:
                 cur.execute(
                     "INSERT INTO production.analysis_impacts (run_id, node_type, node_id, "
-                    "node_name, impact_type, path, evidence, rule_id, assumptions, "
-                    "missing_info, departments) VALUES (%(run_id)s, %(node_type)s, "
-                    "%(node_id)s, %(node_name)s, %(impact_type)s, %(path)s, %(evidence)s, "
-                    "%(rule_id)s, %(assumptions)s, %(missing_info)s, %(departments)s)",
+                    "node_name, impact_type, relation_depth, evidence_status, path, "
+                    "evidence, rule_id, assumptions, missing_info, departments) "
+                    "VALUES (%(run_id)s, %(node_type)s, %(node_id)s, %(node_name)s, "
+                    "%(impact_type)s, %(relation_depth)s, %(evidence_status)s, %(path)s, "
+                    "%(evidence)s, %(rule_id)s, %(assumptions)s, %(missing_info)s, "
+                    "%(departments)s)",
                     {
                         "run_id": run_id,
                         **item,
+                        "relation_depth": item.get("relation_depth"),
+                        "evidence_status": item.get("evidence_status"),
                         "path": Jsonb(item.get("path") or []),
                         "departments": Jsonb(item.get("departments") or []),
                     },
@@ -128,14 +132,40 @@ class AnalysisRepository:
 
     @_db_errors
     def save_actions(self, run_id, actions: list[dict]):
+        ids = []
         if not actions:
-            return
+            return ids
         with self._conn() as conn, conn.cursor() as cur:
             for item in actions:
                 cur.execute(
                     "INSERT INTO production.analysis_actions (run_id, department_id, "
                     "department_name, action, priority) VALUES (%(run_id)s, %(department_id)s, "
-                    "%(department_name)s, %(action)s, %(priority)s)",
+                    "%(department_name)s, %(action)s, %(priority)s) RETURNING id",
+                    {"run_id": run_id, **item},
+                )
+                ids.append(cur.fetchone()["id"])
+            conn.commit()
+        return ids
+
+    @_db_errors
+    def save_related_incidents(self, run_id, related: list[dict]):
+        if not related:
+            return
+        with self._conn() as conn, conn.cursor() as cur:
+            for item in related:
+                cur.execute(
+                    "INSERT INTO production.analysis_related_incidents "
+                    "(run_id, related_incident_id, match_criteria, note) "
+                    "VALUES (%(run_id)s, %(related_incident_id)s, %(match_criteria)s, %(note)s)",
                     {"run_id": run_id, **item},
                 )
             conn.commit()
+
+    @_db_errors
+    def list_related_incidents(self, run_id):
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM production.analysis_related_incidents WHERE run_id = %(id)s ORDER BY id",
+                {"id": run_id},
+            )
+            return cur.fetchall()

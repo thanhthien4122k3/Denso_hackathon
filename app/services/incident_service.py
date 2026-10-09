@@ -71,6 +71,10 @@ class IncidentService:
         if assigned is not None and not self.catalog.exists("department", assigned):
             raise ValidationFailedError("Bộ phận phụ trách không tồn tại.")
 
+        root_cause_status = data.get("root_cause_status", "UNKNOWN")
+        if root_cause_status not in ("UNKNOWN", "HYPOTHESIS", "CONFIRMED"):
+            raise ValidationFailedError("root_cause_status phải là UNKNOWN/HYPOTHESIS/CONFIRMED.")
+
         return {
             "code": code,
             "title": title,
@@ -85,6 +89,12 @@ class IncidentService:
             "assigned_department_id": assigned,
             "request_id": request_id,
             "is_simulated": bool(data.get("is_simulated", False)),
+            "recovered_at": _dt(data.get("recovered_at")),
+            "recovered_by": (data.get("recovered_by") or "").strip() or None,
+            "closed_at": _dt(data.get("closed_at")),
+            "closed_by": (data.get("closed_by") or "").strip() or None,
+            "resolution_summary": (data.get("resolution_summary") or "").strip() or None,
+            "root_cause_status": root_cause_status,
         }
 
     def create(self, data):
@@ -110,7 +120,9 @@ class IncidentService:
             "title": "str", "incident_type": "enum_type", "source_object_type": "str",
             "source_object_id": "int", "start_time": "dt", "end_time": "dt",
             "severity": "enum_sev", "status": "enum_status", "description": "str",
-            "assigned_department_id": "int",
+            "assigned_department_id": "int", "recovered_at": "dt", "recovered_by": "str",
+            "closed_at": "dt", "closed_by": "str", "resolution_summary": "str",
+            "root_cause_status": "enum_rcs",
         }
         for field, ftype in mapping.items():
             if field not in data:
@@ -122,6 +134,8 @@ class IncidentService:
                 raise ValidationFailedError(f"severity phải thuộc {sorted(SEVERITIES)}.")
             if field == "status" and value not in STATUSES:
                 raise ValidationFailedError(f"status phải thuộc {sorted(STATUSES)}.")
+            if field == "root_cause_status" and value not in ("UNKNOWN", "HYPOTHESIS", "CONFIRMED"):
+                raise ValidationFailedError("root_cause_status phải là UNKNOWN/HYPOTHESIS/CONFIRMED.")
             if ftype == "dt":
                 value = _dt(value)
             elif ftype == "int" and (isinstance(value, bool) or not isinstance(value, int)):

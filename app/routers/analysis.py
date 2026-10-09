@@ -38,6 +38,7 @@ def run_whatif(payload: dict, service: AnalysisService = Depends(get_service)):
             duration_minutes=payload.get("duration_minutes"),
             rate_per_minute=payload.get("rate_per_minute"),
             assumptions=payload.get("assumptions"),
+            at_time=payload.get("at_time"),
         ),
     }
 

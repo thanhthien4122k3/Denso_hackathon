@@ -20,13 +20,17 @@
     <div class="header-center">
       <h1 id="page-title" class="page-title">Trung tâm vận hành</h1>
     </div>
-    <div class="header-right">
+      <div class="header-right">
       <div class="mode-toggle" role="group" aria-label="Chế độ dữ liệu">
         <button id="mode-operations" class="mode-btn active" data-mode="operations">Vận hành</button>
         <button id="mode-simulation" class="mode-btn" data-mode="simulation">Mô phỏng</button>
       </div>
       <button id="header-record" class="btn btn-primary header-action">+ Ghi nhận</button>
       <button id="header-incident" class="btn btn-outline header-action">Báo cáo sự cố</button>
+      <div id="user-menu" class="user-menu">
+        <span id="user-name" class="user-name"></span>
+        <button id="logout-btn" class="btn btn-ghost header-action">Đăng xuất</button>
+      </div>
     </div>
   </header>
 
@@ -50,6 +54,26 @@
         <button id="modal-close" class="modal-close" aria-label="Đóng">×</button>
       </div>
       <div id="modal-body"></div>
+    </div>
+  </div>
+
+  <div id="login-screen" class="login-screen hidden">
+    <div class="login-box">
+      <div class="login-brand"><span class="brand-mark"></span><span class="brand-name">Denso D3</span></div>
+      <h2 class="login-title">Đăng nhập</h2>
+      <p class="login-sub">Ứng dụng nội bộ — nhập liệu sản xuất và phân tích sự cố.</p>
+      <form id="login-form" class="login-form">
+        <label class="field">
+          <span>Tên đăng nhập</span>
+          <input id="login-username" name="username" autocomplete="username" />
+        </label>
+        <label class="field">
+          <span>Mật khẩu</span>
+          <input id="login-password" name="password" type="password" autocomplete="current-password" />
+        </label>
+        <div id="login-error" class="message error hidden"></div>
+        <button type="submit" class="btn btn-primary login-submit">Đăng nhập</button>
+      </form>
     </div>
   </div>
 

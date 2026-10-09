@@ -30,6 +30,11 @@
     const resp = await fetch(path, opts);
     let body = null;
     try { body = await resp.json(); } catch (e) {}
+    if (resp.status === 401) {
+      const msg = (body && body.message) || "Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.";
+      if (path !== "/api/auth/login") showLogin();
+      const err = new Error(msg); err.status = 401; throw err;
+    }
     if (!resp.ok) {
       let msg;
       if (body && body.detail) msg = typeof body.detail === "string" ? body.detail : "Dữ liệu không hợp lệ.";
@@ -81,6 +86,7 @@
     system: '<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v7c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/>',
     survey: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.8.4-1 1-1 1.7"/><path d="M12 17h.01"/>',
     search: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>',
+    users: '<circle cx="9" cy="8" r="3.5"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><circle cx="17" cy="9" r="2.5"/><path d="M16 14c2.8 0 5 2.2 5 5"/>',
     plus: '<path d="M12 5v14M5 12h14"/>',
     check: '<path d="M4 12l5 5L20 6"/>',
     alert: '<path d="M12 3l9 16H3z"/><path d="M12 10v4"/><path d="M12 17h.01"/>',
@@ -815,12 +821,13 @@
     const v = $("#view");
     v.textContent = "";
     v.appendChild(spinner());
-    let inc, causes, links, runs;
+    let inc, causes, links, runs, ctxData;
     try {
       inc = (await api("/api/incidents/" + id)).data;
       causes = (await api("/api/incidents/" + id + "/causes")).data;
       links = (await api("/api/incidents/" + id + "/links")).data;
       runs = (await api("/api/analysis/runs?page_size=50")).data.items.filter(r => r.source_type === "INCIDENT" && r.source_id === Number(id));
+      ctxData = (await api("/api/incidents/" + id + "/context")).data;
     } catch (e) { v.textContent = ""; v.appendChild(errorBox(e.message, () => renderIncidentDetail(id))); return; }
     v.textContent = "";
 
@@ -850,6 +857,8 @@
       ]),
       inc.description ? h("div", { class: "explain", style: "margin-top:12px;" }, [h("h4", { text: "Quan sát (triệu chứng)" }), h("div", { text: inc.description })]) : null,
     ]));
+
+    left.appendChild(renderContextCard(id, ctxData));
 
     // causes
     const causeCard = h("div", { class: "card" });
@@ -888,7 +897,11 @@
       catch (e) { toast(e.message, "error"); }
     } }));
     actCard.appendChild(statusRow);
-    actCard.appendChild(h("button", { class: "btn btn-primary", style: "width:100%;", text: "Chạy phân tích tác động", onclick: () => navigate("analysis?incident=" + id) }));
+    if (userHasRole("COORDINATOR")) {
+      actCard.appendChild(h("button", { class: "btn btn-outline", style: "width:100%;margin-top:8px;", text: "Xác nhận khôi phục", onclick: () => recoverIncident(id) }));
+      actCard.appendChild(h("button", { class: "btn btn-primary", style: "width:100%;margin-top:8px;", text: "Đóng hồ sơ", onclick: () => closeIncident(id) }));
+    }
+    actCard.appendChild(h("button", { class: "btn btn-primary", style: "width:100%;margin-top:8px;", text: "Chạy phân tích tác động", onclick: () => navigate("analysis?incident=" + id) }));
     if (runs.length) {
       actCard.appendChild(h("h4", { text: "Đã phân tích " + runs.length + " lần", style: "margin:12px 0 6px;" }));
       runs.slice(0, 5).forEach((r) => actCard.appendChild(h("button", { class: "btn btn-ghost btn-sm", style: "width:100%;text-align:left;", text: "Xem phân tích #" + r.id + " — " + fmt(r.run_at), onclick: () => navigate("analysis?run=" + r.id) })));
@@ -897,6 +910,92 @@
   }
   function kv(k, v, node) {
     return h("div", { class: "kv-row" }, [h("span", { class: "k", text: k }), node ? node : h("span", { text: v })]);
+  }
+
+  const CTX_STATUS = { MATCHED: ["Đã xác định", "green"], AMBIGUOUS: ["Mơ hồ — cần xác minh", "amber"], NOT_FOUND: ["Chưa xác định", "gray"], CONFIRMED: ["Đã xác minh", "green"], NEEDS_REVIEW: ["Cần kiểm tra lại", "red"] };
+
+  function renderContextCard(id, ctxData) {
+    const card = h("div", { class: "card" });
+    card.appendChild(h("div", { class: "card-title" }, [h("span", { text: "Bối cảnh sản xuất" })]));
+    const status = ctxData.status || "NOT_FOUND";
+    card.appendChild(h("div", { style: "margin-bottom:8px;" }, [badge(CTX_STATUS[status][0], CTX_STATUS[status][1])]));
+    const candidates = ctxData.candidates || [];
+    if (!candidates.length) {
+      card.appendChild(h("p", { class: "cell-sub", text: "Chưa xác định được lô/công đoạn tại thời điểm xảy ra sự cố." }));
+    } else {
+      const tbl = h("div");
+      renderTable(tbl, [
+        { key: "lot_code", label: "Lô" }, { key: "process_code", label: "Công đoạn" },
+        { key: "started_at", label: "Bắt đầu", render: (r) => fmt(r.started_at) },
+        { key: "ended_at", label: "Kết thúc", render: (r) => r.ended_at ? fmt(r.ended_at) : badge("Đang chạy", "green") },
+      ], candidates);
+      card.appendChild(tbl);
+    }
+    if (ctxData.verification && ctxData.verification.status === "CONFIRMED") {
+      const vr = ctxData.verification;
+      card.appendChild(h("div", { class: "explain", style: "margin-top:8px;" }, [
+        h("div", { class: "cell-sub", text: "Đã xác minh bởi #" + vr.decided_by + " lúc " + fmt(vr.decided_at) }),
+        vr.reason ? h("div", { class: "cell-sub", text: "Lý do: " + vr.reason }) : null,
+      ]));
+    }
+    if (status === "AMBIGUOUS" && userHasRole("COORDINATOR")) {
+      card.appendChild(renderVerifyForm(id, candidates));
+    }
+    return card;
+  }
+
+  function renderVerifyForm(id, candidates) {
+    const wrap = h("div", { class: "verify-form", style: "margin-top:8px;border-top:1px solid var(--c-border);padding-top:8px;" });
+    wrap.appendChild(h("h4", { text: "Xác minh bối cảnh" }));
+    const sel = h("select");
+    sel.appendChild(h("option", { value: "", text: "-- Chọn bối cảnh --" }));
+    candidates.forEach(c => sel.appendChild(h("option", { value: c.operation_id, text: c.lot_code + " / " + c.process_code + " (" + c.operation_id + ")" })));
+    const reason = h("input", { placeholder: "Lý do xác minh (bắt buộc)" });
+    wrap.appendChild(h("label", { class: "field", html: "<span>Bối cảnh</span>" }));
+    wrap.appendChild(sel);
+    wrap.appendChild(h("label", { class: "field", html: "<span>Lý do</span>" }));
+    wrap.appendChild(reason);
+    const btn = h("button", { class: "btn btn-primary btn-sm", text: "Xác minh", onclick: async () => {
+      if (!sel.value) { toast("Chọn một bối cảnh.", "error"); return; }
+      if (!reason.value.trim()) { toast("Nhập lý do xác minh.", "error"); return; }
+      btn.disabled = true;
+      try {
+        await api("/api/incidents/" + id + "/context/verify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ operation_ids: [Number(sel.value)], reason: reason.value }) });
+        toast("Đã xác minh bối cảnh."); renderIncidentDetail(id);
+      } catch (e) { toast(e.message, "error"); btn.disabled = false; }
+    } });
+    wrap.appendChild(btn);
+    return wrap;
+  }
+
+  function recoverIncident(id) {
+    const fields = [
+      { name: "recovered_at", label: "Thời điểm khôi phục", type: "datetime", required: true },
+      { name: "note", label: "Ghi chú", type: "textarea" },
+    ];
+    const fb = formBuilder(fields, async (data, s) => {
+      fb.setSubmitting(true);
+      try {
+        await api("/api/incidents/" + id + "/recover", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ recovered_at: data.recovered_at ? iso(data.recovered_at) : null }) });
+        closeModal(); toast("Đã xác nhận khôi phục."); renderIncidentDetail(id);
+      } catch (e) { toast(e.message, "error"); fb.setSubmitting(false); }
+    });
+    openModal("Xác nhận khôi phục", fb.form);
+  }
+
+  function closeIncident(id) {
+    const fields = [
+      { name: "resolution_summary", label: "Tóm tắt kết quả xử lý", type: "textarea", required: true },
+      { name: "root_cause_status", label: "Trạng thái nguyên nhân", type: "select", options: [{ value: "UNKNOWN", label: "Chưa xác định" }, { value: "HYPOTHESIS", label: "Giả thuyết" }, { value: "CONFIRMED", label: "Đã xác nhận" }] },
+    ];
+    const fb = formBuilder(fields, async (data, s) => {
+      fb.setSubmitting(true);
+      try {
+        await api("/api/incidents/" + id + "/close", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ resolution_summary: data.resolution_summary, root_cause_status: data.root_cause_status || "UNKNOWN" }) });
+        closeModal(); toast("Đã đóng hồ sơ."); renderIncidentDetail(id);
+      } catch (e) { toast(e.message, "error"); fb.setSubmitting(false); }
+    });
+    openModal("Đóng hồ sơ", fb.form);
   }
 
   /* ============================================================ map */
@@ -1086,9 +1185,52 @@
   function renderAnalysisResult(r) {
     const box = $("#view .card:nth-child(2)");
     box.textContent = "";
-    box.appendChild(h("div", { class: "card-title" }, [h("span", { text: "Kết quả phân tích" }), h("span", { class: "sub", text: "Quy tắc " + (r.rules || []).join(", ") + " — phiên bản " + r.rule_version })]));
+    box.appendChild(h("div", { class: "card-title" }, [h("span", { text: "Kết quả phân tích" }), h("span", { class: "sub", text: "Quy tắc " + (r.rules || []).join(", ") + " — phiên bản " + r.rule_version + (r.run_id ? " · lần chạy #" + r.run_id : "") })]));
     if (r.quantification && r.quantification.available) box.appendChild(h("div", { class: "message visible info", text: "Định lượng: " + r.quantification.formula + " = " + r.quantification.lost_quantity + " pcs" }));
     else if (r.quantification) box.appendChild(h("div", { class: "message visible warn", text: r.quantification.message }));
+
+    // Bối cảnh sản xuất
+    if (r.context) {
+      const c = r.context;
+      const cs = CTX_STATUS[c.status] || [c.status, "gray"];
+      box.appendChild(h("div", { class: "explain" }, [
+        h("div", { style: "display:flex;gap:8px;align-items:center;flex-wrap:wrap;" }, [h("strong", { text: "Bối cảnh sản xuất" }), badge(cs[0], cs[1])]),
+        c.lot_code ? h("div", { class: "cell-sub", style: "margin-top:4px;", text: "Lô " + c.lot_code + " · công đoạn " + c.process_code + (c.order_code ? " · lệnh " + c.order_code : "") }) : null,
+        c.message ? h("div", { class: "cell-sub", style: "margin-top:4px;", text: c.message }) : null,
+        (c.status === "AMBIGUOUS" && c.candidates && c.candidates.length) ? h("div", { class: "cell-sub", style: "margin-top:4px;", text: "Có " + c.candidates.length + " bối cảnh phù hợp — cần xác minh (xem trang chi tiết sự cố)." }) : null,
+      ]));
+    }
+    // Ước tính định lượng
+    if (r.capacity_estimate) {
+      const ce = r.capacity_estimate;
+      box.appendChild(h("div", { class: "explain" }, [
+        h("div", { style: "display:flex;gap:8px;align-items:center;" }, [badge("Ước tính", "blue"), h("strong", { text: ce.estimated_quantity + " " + (ce.unit || "pcs") + " năng lực có nguy cơ" })]),
+        h("div", { class: "cell-sub", style: "margin-top:4px;", text: ce.formula + " = " + ce.duration_minutes + " × " + ce.rate_per_minute }),
+        ce.assumptions ? h("div", { class: "cell-sub", text: "Giả định: " + ce.assumptions }) : null,
+      ]));
+    }
+    if (r.buffer_estimate && r.buffer_estimate.available) {
+      const be = r.buffer_estimate;
+      box.appendChild(h("div", { class: "explain" }, [
+        h("div", { style: "display:flex;gap:8px;align-items:center;" }, [badge("Ước tính", "blue"), h("strong", { text: "Công đoạn sau (" + be.downstream_name + ") có nguy cơ cạn hàng sau " + be.depletion_minutes + " phút" })]),
+        h("div", { class: "cell-sub", style: "margin-top:4px;", text: "Hàng đệm " + be.buffer_qty + " " + (be.buffer_unit || "") + " ÷ " + be.rate_per_minute + " pcs/phút ≈ " + fmt(be.depletion_time) }),
+        h("div", { class: "cell-sub", text: be.assumptions }),
+      ]));
+    } else if (r.buffer_estimate && r.buffer_estimate.message) {
+      box.appendChild(h("div", { class: "explain" }, [h("div", { class: "cell-sub", text: r.buffer_estimate.message })]));
+    }
+    // Sự cố tương tự
+    const related = r.related_past_incidents || [];
+    if (related.length) {
+      box.appendChild(h("h3", { text: "Sự cố tương tự (" + related.length + ")" }));
+      const relWrap = h("div");
+      related.forEach(p => relWrap.appendChild(h("div", { class: "explain" }, [
+        h("div", { style: "display:flex;gap:8px;align-items:center;" }, [h("strong", { text: p.code }), h("span", { class: "cell-sub", text: "Khớp: " + p.matched_criteria.join(", ") })]),
+        h("button", { class: "btn btn-ghost btn-sm", text: "Mở hồ sơ cũ", onclick: () => navigate("incidents/" + p.incident_id) }),
+        h("div", { class: "cell-sub", style: "margin-top:4px;", text: "Nguyên nhân cũ chỉ để tham khảo; không tự áp dụng cho sự cố hiện tại." }),
+      ])));
+      box.appendChild(relWrap);
+    }
 
     const impacts = r.impacts || [], hypotheses = r.hypotheses || [], actions = r.actions || [];
     box.appendChild(h("h3", { text: "Ảnh hưởng (" + impacts.length + ")" }));
@@ -1098,6 +1240,8 @@
       const m = IMPACT_TYPE[i.impact_type] || [i.impact_type, "gray"];
       const ex = h("div", { class: "explain", style: "display:none;" }, [
         h("div", { class: "kv" }, [h("span", { text: "Bằng chứng: " + (i.evidence || "—") }), i.rule_id ? h("span", { text: "Quy tắc: " + i.rule_id }) : null]),
+        i.evidence_status ? h("div", { class: "cell-sub", text: "Trạng thái bằng chứng: " + i.evidence_status }) : null,
+        i.relation_depth ? h("div", { class: "cell-sub", text: "Độ sâu quan hệ: " + i.relation_depth }) : null,
         i.path && i.path.length ? h("div", { class: "hop", style: "margin-top:8px;", text: i.path.map(s => s.from_type + "#" + s.from_id + " → " + s.to_type + "#" + s.to_id).join("  ›  ") }) : null,
         i.missing_info ? h("div", { class: "cell-sub", style: "margin-top:4px;", text: "Dữ liệu còn thiếu: " + i.missing_info }) : null,
       ]);
@@ -1124,10 +1268,21 @@
     const actWrap = h("div");
     if (!actions.length) actWrap.appendChild(h("p", { class: "cell-sub", text: "Không có hành động đề xuất." }));
     else actions.forEach(a => actWrap.appendChild(h("div", { class: "explain" }, [
-      h("div", { style: "display:flex;justify-content:space-between;gap:8px;align-items:center;" }, [h("div", {}, [h("div", { text: a.action }), h("div", { class: "cell-sub", text: a.department_name + " · ưu tiên " + a.priority })])]),
+      h("div", { style: "display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;" }, [
+        h("div", {}, [h("div", { text: a.action }), h("div", { class: "cell-sub", text: a.department_name + " · ưu tiên " + a.priority })]),
+        a.id ? h("button", { class: "btn btn-sm btn-secondary", text: "Tạo công việc", onclick: () => createTaskFromAction(a, r) }) : null,
+      ]),
     ])));
     box.appendChild(actWrap);
     box.appendChild(h("div", { class: "message visible warn", text: "Đây là đề xuất từ quy tắc (không phải xác suất, không phải nguyên nhân đã xác nhận)." }));
+  }
+
+  async function createTaskFromAction(a, r) {
+    try {
+      const payload = { analysis_action_id: a.id, title: a.action, department_id: a.department_id || null, source_analysis_run_id: r.run_id || null, source_incident_id: r.incident_id || null, is_simulated: dataMode === "simulation" };
+      const d = await api("/api/tasks/from-action", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      toast(d.message);
+    } catch (e) { toast(e.message, "error"); }
   }
   async function loadHistory() {
     const wrap = $("#view .card:nth-child(3)");
@@ -1284,6 +1439,56 @@
     openModal("Trả lời khảo sát", fb.form);
   }
 
+  /* ============================================================ users (admin) */
+  async function renderUsers() {
+    const v = $("#view");
+    v.textContent = "";
+    v.appendChild(h("div", { class: "section-head" }, [h("div", {}, [h("h2", { text: "Tài khoản & quyền" }), h("div", { class: "desc", text: "Quản lý tài khoản local và vai trò. Mật khẩu được băm; không lưu dạng văn bản." })])]));
+    const card = h("div", { class: "card" });
+    v.appendChild(card);
+    const toolbar = h("div", { class: "toolbar" });
+    const listWrap = h("div");
+    toolbar.appendChild(h("button", { class: "btn btn-primary", text: "Tạo tài khoản", onclick: () => userForm() }));
+    card.appendChild(toolbar); card.appendChild(listWrap);
+    async function load() {
+      listWrap.textContent = ""; listWrap.appendChild(spinner());
+      try {
+        const d = await api("/api/auth/users");
+        listWrap.textContent = "";
+        if (!d.data.length) { listWrap.appendChild(emptyBox("users", "Chưa có tài khoản", "Tạo tài khoản đầu tiên bằng script hoặc nút bên dưới.")); return; }
+        renderTable(listWrap, [
+          { key: "username", label: "Tên đăng nhập" }, { key: "display_name", label: "Tên hiển thị" },
+          { key: "roles", label: "Vai trò", render: (r) => (r.roles || []).map(x => badge(x, "blue")).reduce((f, b) => { if (f) f.appendChild(document.createTextNode(" ")); f.appendChild(b); return f; }, h("span", {})) },
+          { key: "active", label: "Trạng thái", render: (r) => r.active ? badge("Hoạt động", "green") : badge("Đã khóa", "red") },
+        ], d.data, (row) => h("td", {}, [
+          h("button", { class: "btn btn-sm btn-secondary", text: row.active ? "Khóa" : "Mở khóa", onclick: () => toggleActive(row) }),
+        ]));
+      } catch (e) { listWrap.textContent = ""; listWrap.appendChild(errorBox(e.message, load)); }
+    }
+    async function toggleActive(row) {
+      try { await api("/api/auth/users/" + row.id + "/active", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ active: !row.active }) }); toast("Đã cập nhật."); load(); }
+      catch (e) { toast(e.message, "error"); }
+    }
+    function userForm() {
+      const fields = [
+        { name: "username", label: "Tên đăng nhập", required: true },
+        { name: "display_name", label: "Tên hiển thị", required: true },
+        { name: "password", label: "Mật khẩu", required: true },
+        { name: "roles", label: "Vai trò (phân tách bởi dấu phẩy)", hint: "OPERATOR, HANDLER, COORDINATOR, ADMIN" },
+      ];
+      const fb = formBuilder(fields, async (data, s) => {
+        fb.setSubmitting(true);
+        try {
+          const roles = (data.roles || "").split(",").map(x => x.trim()).filter(Boolean);
+          await api("/api/auth/users", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: data.username, display_name: data.display_name, password: data.password, roles }) });
+          closeModal(); toast("Đã tạo tài khoản."); load();
+        } catch (e) { toast(e.message, "error"); fb.setSubmitting(false); }
+      });
+      openModal("Tạo tài khoản", fb.form);
+    }
+    load();
+  }
+
   /* ============================================================ dashboard */
   let dataMode = localStorage.getItem("d3.mode") || "operations";
   async function renderDashboard() {
@@ -1406,6 +1611,53 @@
     return el;
   }
 
+  /* ============================================================ auth */
+  let currentUser = null;
+
+  function showLogin() {
+    $("#login-screen").classList.remove("hidden");
+    const el = $("#login-error"); el.classList.add("hidden"); el.textContent = "";
+  }
+  function hideLogin() { $("#login-screen").classList.add("hidden"); }
+  function userHasRole(role) { return currentUser && currentUser.roles && currentUser.roles.includes(role); }
+
+  async function initAuth() {
+    try {
+      const d = await api("/api/auth/me");
+      currentUser = d.data;
+      $("#user-name").textContent = currentUser.display_name + " · " + (currentUser.roles || []).join(", ");
+      hideLogin();
+      buildSidebar();
+      renderRoute();
+    } catch (e) { showLogin(); }
+  }
+
+  $("#login-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const un = $("#login-username").value.trim();
+    const pw = $("#login-password").value;
+    const btn = $(".login-submit");
+    btn.disabled = true; btn.textContent = "Đang đăng nhập...";
+    try {
+      const d = await api("/api/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: un, password: pw }) });
+      currentUser = d.data;
+      $("#user-name").textContent = currentUser.display_name + " · " + (currentUser.roles || []).join(", ");
+      hideLogin();
+      buildSidebar();
+      navigate("dashboard");
+    } catch (err) {
+      const el = $("#login-error"); el.textContent = err.message; el.classList.remove("hidden");
+    }
+    btn.disabled = false; btn.textContent = "Đăng nhập";
+  });
+
+  $("#logout-btn").addEventListener("click", async () => {
+    try { await api("/api/auth/logout", { method: "POST" }); } catch (e) {}
+    currentUser = null;
+    $("#user-name").textContent = "";
+    showLogin();
+  });
+
   /* ============================================================ router */
   const ROUTES = {
     dashboard: { title: "Trung tâm vận hành", group: "Tổng quan", icon: "dashboard", render: renderDashboard },
@@ -1418,13 +1670,17 @@
     catalog: { title: "Danh mục sản xuất", group: "Thiết lập dữ liệu", icon: "catalog", render: renderCatalog },
     system: { title: "Nguồn dữ liệu & ánh xạ", group: "Thiết lập dữ liệu", icon: "system", render: renderSystem },
     survey: { title: "Khảo sát & xác nhận", group: "Thiết lập dữ liệu", icon: "survey", render: renderSurvey },
+    users: { title: "Tài khoản & quyền", group: "Thiết lập dữ liệu", icon: "users", render: renderUsers, adminOnly: true },
   };
 
   function buildSidebar() {
     const wrap = $("#sidebar-groups");
     wrap.textContent = "";
     const groups = {};
-    Object.keys(ROUTES).forEach(r => { const g = ROUTES[r].group; (groups[g] = groups[g] || []).push(r); });
+    Object.keys(ROUTES).forEach(r => {
+      if (ROUTES[r].adminOnly && !userHasRole("ADMIN")) return;
+      const g = ROUTES[r].group; (groups[g] = groups[g] || []).push(r);
+    });
     Object.keys(groups).forEach(g => {
       const grp = h("div", { class: "nav-group" });
       grp.appendChild(h("div", { class: "nav-group-title", text: g }));
@@ -1448,6 +1704,7 @@
     location.hash = "#/" + path;
   }
   function renderRoute() {
+    if (!currentUser) { showLogin(); return; }
     const { parts, params } = parseHash();
     const route = parts[0] || "dashboard";
     const cfg = ROUTES[route];
@@ -1482,6 +1739,5 @@
   function removeBackdrop() { const bd = $(".sidebar-backdrop"); if (bd) bd.remove(); }
 
   window.addEventListener("hashchange", renderRoute);
-  buildSidebar();
-  renderRoute();
+  initAuth();
 })();

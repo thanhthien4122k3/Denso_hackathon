@@ -19,7 +19,7 @@ class ScenarioService:
         self.incidents = repos.get("incidents") or IncidentRepository()
 
     def is_loaded(self) -> bool:
-        return self.catalog.find_by_code("department", "MAINTENANCE") is not None
+        return self.catalog.find_by_code("department", "MAINT") is not None
 
     def load_demo(self) -> dict:
         if self.is_loaded():
@@ -40,7 +40,7 @@ class ScenarioService:
         for line in s.LINES:
             row = self.catalog.create("line", {
                 **line, "is_simulated": True,
-                "department_id": node_id("department", "PLANNING"),
+                "department_id": node_id("department", "PLAN"),
             })
             ids[("line", line["code"])] = row["id"]
         for proc in s.PROCESSES:
@@ -52,19 +52,19 @@ class ScenarioService:
         for machine in s.MACHINES:
             row = self.catalog.create("machine", {
                 **machine, "is_simulated": True,
-                "department_id": node_id("department", "MAINTENANCE"),
+                "department_id": node_id("department", "MAINT"),
             })
             ids[("machine", machine["code"])] = row["id"]
         for material in s.MATERIALS:
             row = self.catalog.create("material", {
                 **material, "is_simulated": True,
-                "department_id": node_id("department", "WAREHOUSE"),
+                "department_id": node_id("department", "WH"),
             })
             ids[("material", material["code"])] = row["id"]
         for product in s.PRODUCTS:
             row = self.catalog.create("product", {
                 **product, "is_simulated": True,
-                "department_id": node_id("department", "PLANNING"),
+                "department_id": node_id("department", "PLAN"),
             })
             ids[("product", product["code"])] = row["id"]
         for order in s.ORDERS:
@@ -91,7 +91,7 @@ class ScenarioService:
                 "code": src["code"], "name": src["name"],
                 "source_type": src["source_type"],
                 "collection_method": src["collection_method"],
-                "owner_department_id": node_id("department", "IT_DATA"),
+                "owner_department_id": node_id("department", "DATA"),
                 "confirmed": src.get("confirmed", False), "is_simulated": True,
             })
             source_ids[src["code"]] = row["id"]
@@ -106,7 +106,7 @@ class ScenarioService:
                 "update_schedule": ds["update_schedule"],
                 "event_time_field": ds["event_time_field"],
                 "timezone": ds["timezone"],
-                "owner_department_id": node_id("department", "IT_DATA"),
+                "owner_department_id": node_id("department", "DATA"),
                 "confirmed": ds.get("confirmed", False), "is_simulated": True,
             })
             dataset_ids[ds["code"]] = row["id"]

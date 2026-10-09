@@ -3,6 +3,8 @@
 from fastapi import APIRouter, Depends
 
 from app.services.scenario_service import ScenarioService
+from app.services.scenario_d3_service import ScenarioD3Service
+from app.services.scenario_ambiguous_service import ScenarioAmbiguousService
 from app.services.survey_service import SurveyService
 
 scenarios_router = APIRouter(prefix="/api/scenarios", tags=["scenarios"])
@@ -11,6 +13,14 @@ survey_router = APIRouter(prefix="/api/survey", tags=["survey"])
 
 def get_scenario_service() -> ScenarioService:
     return ScenarioService()
+
+
+def get_d3_service() -> ScenarioD3Service:
+    return ScenarioD3Service()
+
+
+def get_ambiguous_service() -> ScenarioAmbiguousService:
+    return ScenarioAmbiguousService()
 
 
 def get_survey_service() -> SurveyService:
@@ -53,6 +63,26 @@ def scenario_status(service: ScenarioService = Depends(get_scenario_service)):
 @scenarios_router.post("/load")
 def load_demo(service: ScenarioService = Depends(get_scenario_service)):
     return {"success": True, "message": "OK", "data": service.load_demo()}
+
+
+@scenarios_router.get("/d3/status")
+def d3_status(service: ScenarioD3Service = Depends(get_d3_service)):
+    return {"success": True, "message": "OK", "data": {"loaded": service.is_loaded()}}
+
+
+@scenarios_router.post("/d3/load")
+def load_d3(service: ScenarioD3Service = Depends(get_d3_service)):
+    return {"success": True, "message": "OK", "data": service.load()}
+
+
+@scenarios_router.get("/d3-ambiguous/status")
+def ambiguous_status(service: ScenarioAmbiguousService = Depends(get_ambiguous_service)):
+    return {"success": True, "message": "OK", "data": {"loaded": service.is_loaded()}}
+
+
+@scenarios_router.post("/d3-ambiguous/load")
+def load_ambiguous(service: ScenarioAmbiguousService = Depends(get_ambiguous_service)):
+    return {"success": True, "message": "OK", "data": service.load()}
 
 
 @survey_router.get("/groups")

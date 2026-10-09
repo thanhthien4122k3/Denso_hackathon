@@ -8,6 +8,7 @@ from app.exceptions import DatabaseUnavailableError
 _TASK_COLS = [
     "department_id", "title", "description", "status", "priority",
     "source_incident_id", "source_analysis_run_id", "rule_id", "is_simulated",
+    "analysis_action_id",
 ]
 
 
@@ -55,6 +56,16 @@ class TaskRepository:
     def get(self, task_id):
         with self._conn() as conn, conn.cursor() as cur:
             cur.execute("SELECT * FROM production.action_tasks WHERE id = %(id)s", {"id": task_id})
+            return cur.fetchone()
+
+    @_db_errors
+    def find_by_analysis_action(self, analysis_action_id):
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM production.action_tasks WHERE analysis_action_id = %(id)s "
+                "ORDER BY id DESC LIMIT 1",
+                {"id": analysis_action_id},
+            )
             return cur.fetchone()
 
     @_db_errors
