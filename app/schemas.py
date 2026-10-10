@@ -98,3 +98,70 @@ class ListResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: str
     database: str
+
+
+# ---- Đồ thị (graph) ----
+class GraphEdgeCreate(BaseModel):
+    source_type: str
+    source_id: int
+    target_type: str
+    target_id: int
+    kind: str
+    label: str | None = None
+    description: str | None = None
+    source_confirmation: str | None = None
+    valid_from: str | None = None
+    valid_to: str | None = None
+    is_simulated: bool = False
+
+
+class GraphEdgeUpdate(BaseModel):
+    label: str | None = None
+    description: str | None = None
+    source_confirmation: str | None = None
+    valid_from: str | None = None
+    valid_to: str | None = None
+    is_simulated: bool | None = None
+
+
+# ---- Danh mục (catalog) ----
+class CatalogUpsert(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    code: str
+    name: str
+
+
+# ---- Vận hành (operations) ----
+class MachineStateCreate(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    machine_id: int
+    event_time: str
+    state: str
+
+
+class DowntimeCreate(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    machine_id: int
+    start_time: str
+
+
+class DowntimeClose(BaseModel):
+    end_time: str | None = None
+
+
+class ReportMachineError(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    machine_id: int
+    event_time: str
+
+
+class QcCreate(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    lot_id: int
+    result: str
+
+
+class MaterialCreate(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    material_id: int
+    available_qty: float

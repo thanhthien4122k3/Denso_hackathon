@@ -3,6 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.catalog import CATALOG_ENTITIES, CATALOG_KEYS
+from app.schemas import CatalogUpsert
 from app.services.catalog_service import CatalogService
 from app.settings import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 
@@ -53,17 +54,17 @@ def get_entity(key: str, record_id: int, service: CatalogService = Depends(get_s
 
 
 @router.post("/{key}", status_code=201)
-def create_entity(key: str, payload: dict, service: CatalogService = Depends(get_service)):
+def create_entity(key: str, payload: CatalogUpsert, service: CatalogService = Depends(get_service)):
     _ensure_key(key)
-    row = service.create(key, payload)
+    row = service.create(key, payload.model_dump())
     return {"success": True, "message": "Đã tạo.", "data": row}
 
 
 @router.put("/{key}/{record_id}")
-def update_entity(key: str, record_id: int, payload: dict,
+def update_entity(key: str, record_id: int, payload: CatalogUpsert,
                   service: CatalogService = Depends(get_service)):
     _ensure_key(key)
-    row = service.update(key, record_id, payload)
+    row = service.update(key, record_id, payload.model_dump())
     if row is None:
         raise HTTPException(status_code=404, detail="Không tìm thấy bản ghi.")
     return {"success": True, "message": "Đã cập nhật.", "data": row}

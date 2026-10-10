@@ -49,7 +49,7 @@ Gõ `\q` để thoát.
 
 ### Bước 4: Lấy thư mục project
 
-Clon repo **`Denso_production_input`** vào máy tính của bạn (ví dụ `C:\Denso_production_input`).
+Clon repo **`Denso_hackathon`** vào máy tính của bạn (ví dụ `C:\Denso_hackathon`).
 
 ### Bước 5: Cài thư viện và cấu hình
 
@@ -212,3 +212,20 @@ Mô tả chi tiết từng trường trong **Bản đồ liên kết** và **Ph�
 - **"Không thể kết nối PostgreSQL"**: kiểm tra `.env` (mật khẩu `DB_PASSWORD`), kiểm tra dịch vụ PostgreSQL đang chạy.
 - **Trang không hiển thị dữ liệu**: tải lại bằng `Ctrl + F5`.
 - **Tài liệu API** (cho người phát triển): mở `http://localhost:8000/docs`.
+
+---
+
+## F. Chạy kiểm thử (cho người phát triển)
+
+Kiểm thử tích hợp cần một **database test riêng** (mặc định `denso_hackathon_test`), không dùng database thật.
+
+```powershell
+cd C:\Denso_hackathon
+.\.venv\Scripts\Activate.ps1
+$env:TEST_DB_NAME = "denso_hackathon_test"   # tên database test (mặc định)
+python -m pytest -q
+```
+
+- Nếu chưa có database test, conftest sẽ tự tạo rồi chạy migration/seed.
+- Không chạy test khi biến `DB_NAME` đang trỏ vào database thật (production).
+- Test sẽ **skip** nếu không kết nối được PostgreSQL.

@@ -1,10 +1,15 @@
 """Repository cho đồ thị node/edge hai lớp."""
 
 from psycopg import OperationalError
-from psycopg.errors import ForeignKeyViolation
+from psycopg.errors import CheckViolation, ForeignKeyViolation, UniqueViolation
 
 from app.database import get_connection
-from app.exceptions import DatabaseUnavailableError, NotFoundError
+from app.exceptions import (
+    ConflictError,
+    DatabaseUnavailableError,
+    NotFoundError,
+    ValidationFailedError,
+)
 from app.graph import NODE_TABLES, NODE_TYPES
 
 # Bảng dataset_fields không có cột is_simulated.
@@ -17,6 +22,12 @@ def _db_errors(func):
             return func(*args, **kwargs)
         except ForeignKeyViolation as exc:
             raise NotFoundError("Đối tượng tham chiếu không tồn tại.") from exc
+        except UniqueViolation as exc:
+            raise ConflictError("Quan hệ này đã tồn tại.") from exc
+        except CheckViolation as exc:
+            raise ValidationFailedError(
+                "Không thể tạo quan hệ tự nối (đối tượng trỏ tới chính nó)."
+            ) from exc
         except OperationalError as exc:
             raise DatabaseUnavailableError(str(exc)) from exc
 

@@ -3,6 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.graph import EDGE_KINDS, NODE_LABELS, NODE_TYPES
+from app.schemas import GraphEdgeCreate, GraphEdgeUpdate
 from app.services.graph_service import GraphService
 from app.settings import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 
@@ -25,9 +26,12 @@ def meta():
 
 
 @router.get("/map")
-def map_graph(types: str | None = Query(None), service: GraphService = Depends(get_service)):
+def map_graph(types: str | None = Query(None),
+              center: str | None = Query(None),
+              depth: int | None = Query(None, ge=1, le=10),
+              service: GraphService = Depends(get_service)):
     selected = [t for t in (types.split(",") if types else []) if t in NODE_TYPES] or None
-    return {"success": True, "message": "OK", "data": service.get_map(selected)}
+    return {"success": True, "message": "OK", "data": service.get_map(selected, center, depth)}
 
 
 @router.get("/edges")
@@ -41,13 +45,13 @@ def list_edges(page: int = Query(1, ge=1), page_size: int = Query(DEFAULT_PAGE_S
 
 
 @router.post("/edges", status_code=201)
-def create_edge(payload: dict, service: GraphService = Depends(get_service)):
-    return {"success": True, "message": "Đã tạo.", "data": service.create_edge(payload)}
+def create_edge(payload: GraphEdgeCreate, service: GraphService = Depends(get_service)):
+    return {"success": True, "message": "Đã tạo.", "data": service.create_edge(payload.model_dump())}
 
 
 @router.put("/edges/{edge_id}")
-def update_edge(edge_id: int, payload: dict, service: GraphService = Depends(get_service)):
-    return {"success": True, "message": "Đã cập nhật.", "data": service.update_edge(edge_id, payload)}
+def update_edge(edge_id: int, payload: GraphEdgeUpdate, service: GraphService = Depends(get_service)):
+    return {"success": True, "message": "Đã cập nhật.", "data": service.update_edge(edge_id, payload.model_dump())}
 
 
 @router.delete("/edges/{edge_id}")

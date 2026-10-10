@@ -9,13 +9,21 @@ Tài liệu mô tả chi tiết các mục trong nhóm menu **Phân tích**:
 
 Bản đồ thể hiện quan hệ giữa hai lớp: **nghiệp vụ sản xuất** và **logic hệ thống dữ liệu**.
 
-### 1.1. Ba chế độ hiển thị
+### 1.1. Chế độ hiển thị
+
+Bản đồ vẽ theo cột (swimlane) từ trái sang phải: **Bộ phận → Vật tư → Máy → Công đoạn → Chuyền → Sản phẩm/Lệnh/Lot/Ca**.
+Lớp hệ thống (nguồn, dataset, trường) hiển thị ở vùng **"Logic hệ thống dữ liệu"** phía dưới.
 
 | Chế độ | Hiển thị gì |
 |---|---|
-| **Nghiệp vụ sản xuất** | Chỉ các node nghiệp vụ (bộ phận, chuyền, công đoạn, máy, vật tư, sản phẩm, lệnh, lô, ca) và quan hệ giữa chúng. |
-| **Logic hệ thống** | Chỉ nguồn dữ liệu, dataset, trường dữ liệu và luồng giữa chúng. |
-| **Kết hợp hai lớp** | Cả hai lớp và các cạnh nối chúng (ánh xạ dữ liệu–nghiệp vụ). |
+| **Chuỗi sản xuất** | Chỉ các node nghiệp vụ (bộ phận, chuyền, công đoạn, máy, vật tư, sản phẩm, lệnh, lô, ca) và quan hệ giữa chúng. |
+| **Luồng dữ liệu** | Chỉ nguồn dữ liệu, dataset, trường dữ liệu và luồng giữa chúng. |
+| **Kết hợp** | Cả hai lớp và các cạnh nối chúng (ánh xạ dữ liệu–nghiệp vụ). |
+| **Theo sự cố** | Chọn một sự cố rồi tô sáng đường lan truyền và đánh dấu node ảnh hưởng theo mức `DIRECT` / `INDIRECT` / `RISK` (dùng kết quả phân tích đã có). |
+
+Tương tác: kéo nền để di chuyển, con lăn/nút **+ −** để phóng to, **Vừa khung** để thu gọn toàn bộ.
+Bấm node để xem chi tiết (tên + loại tiếng Việt) và quan hệ **Đi ra / Đi vào** kèm nút Sửa/Xóa.
+Nhãn loại node/cạnh hiển thị bằng tiếng Việt; dữ liệu mô phỏng có viền nét đứt và huy hiệu "Mô phỏng".
 
 ### 1.2. Loại node (12 loại)
 
