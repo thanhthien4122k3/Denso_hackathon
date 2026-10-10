@@ -217,6 +217,18 @@ class AnalysisService:
                            "Không cộng thêm ở từng công đoạn và không phải thành phẩm chắc chắn mất.",
         }
 
+    @staticmethod
+    def _json_safe(obj):
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        if isinstance(obj, dict):
+            return {k: AnalysisService._json_safe(v) for k, v in obj.items()}
+        if isinstance(obj, (list, tuple)):
+            return [AnalysisService._json_safe(v) for v in obj]
+        if isinstance(obj, (str, int, float, bool)) or obj is None:
+            return obj
+        return str(obj)
+
     def _related_past(self, incident_type, source_type, source_id, error_code):
         current = {
             "incident_type": incident_type,
@@ -423,6 +435,10 @@ class AnalysisService:
         result["run_id"] = run["id"]
         result["run_at"] = run["run_at"]
         result["incident_id"] = incident_id
+        result["source_type"] = "INCIDENT"
+        result["source_id"] = incident_id
+        result["is_simulated"] = incident.get("is_simulated", False)
+        result["snapshot_available"] = True
         return result
 
     def run_whatif(self, incident_type, source_type, source_id, max_depth=3,
@@ -446,40 +462,60 @@ class AnalysisService:
         )
         result["run_id"] = run["id"]
         result["run_at"] = run["run_at"]
+        result["incident_id"] = None
+        result["source_type"] = "SCENARIO"
+        result["source_id"] = source_id
+        result["is_simulated"] = True
+        result["snapshot_available"] = True
         return result
 
     def _save(self, source_type, source_id, input_data, rule_version, is_simulated, result) -> dict:
-        run = self.analysis.create_run({
-            "source_type": source_type, "source_id": source_id,
-            "input": input_data, "rule_version": rule_version,
-            "is_simulated": is_simulated,
-        })
-        run_id = run["id"]
-        self.analysis.save_impacts(run_id, result["impacts"])
-        self.analysis.save_hypotheses(run_id, result["hypotheses"])
-        action_ids = self.analysis.save_actions(run_id, [
+        actions_db = [
             {"department_id": a["department_id"], "department_name": a["department_name"],
              "action": a["action"], "priority": a["priority"]}
             for a in result["actions"]
-        ])
-        for a, aid in zip(result["actions"], action_ids):
-            a["id"] = aid
+        ]
         related = [{"related_incident_id": r["incident_id"], "match_criteria": ", ".join(r["matched_criteria"]),
                     "note": None} for r in result.get("related_past_incidents", [])]
-        self.analysis.save_related_incidents(run_id, related)
+        snapshot = self._json_safe(result)
+        run, action_ids = self.analysis.save_run(
+            {
+                "source_type": source_type, "source_id": source_id,
+                "input": input_data, "rule_version": rule_version,
+                "is_simulated": is_simulated, "result": snapshot,
+            },
+            result["impacts"], result["hypotheses"], actions_db, related,
+        )
+        for a, aid in zip(result["actions"], action_ids):
+            a["id"] = aid
         return run
 
-    def list_runs(self, page, page_size, source_type=None):
-        return self.analysis.list_runs(page, page_size, source_type)
+    def list_runs(self, page, page_size, source_type=None, source_id=None):
+        return self.analysis.list_runs(page, page_size, source_type, source_id)
 
     def get_run(self, run_id):
         run = self.analysis.get_run(run_id)
         if run is None:
             raise NotFoundError("Không tìm thấy kết quả phân tích.")
+        snapshot = run.get("result")
+        snapshot = snapshot if isinstance(snapshot, dict) else None
         return {
-            "run": run,
+            "run_id": run_id,
+            "run_at": run["run_at"],
+            "incident_id": run["source_id"] if run["source_type"] == "INCIDENT" else None,
+            "source_type": run["source_type"],
+            "source_id": run["source_id"],
+            "is_simulated": run.get("is_simulated", False),
+            "snapshot_available": snapshot is not None,
+            "rule_version": run.get("rule_version"),
+            "rules": (snapshot or {}).get("rules") or [],
+            "signals": (snapshot or {}).get("signals"),
+            "context": (snapshot or {}).get("context"),
+            "quantification": (snapshot or {}).get("quantification"),
+            "buffer_estimate": (snapshot or {}).get("buffer_estimate"),
+            "capacity_estimate": (snapshot or {}).get("capacity_estimate"),
+            "related_past_incidents": (snapshot or {}).get("related_past_incidents") or [],
             "impacts": self.analysis.list_impacts(run_id),
             "hypotheses": self.analysis.list_hypotheses(run_id),
             "actions": self.analysis.list_actions(run_id),
-            "related_incidents": self.analysis.list_related_incidents(run_id),
         }

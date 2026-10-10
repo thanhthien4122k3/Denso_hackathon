@@ -43,14 +43,17 @@ def test_traverse_no_duplicate_impacts():
     assert len(products) == 1  # không cộng lặp
 
 
-def test_non_propagating_edge_becomes_risk():
+def test_mapping_edge_does_not_become_impact_or_propagate():
     edges = [
         _edge("machine", 1, "process", 1),
         _edge("process", 1, "field", 9, "data_mapping"),
     ]
     impacts = traverse(edges, "machine", 1, {"production_dependency"}, 5)
-    risk = [i for i in impacts if i["node_type"] == "field"]
-    assert risk and risk[0]["impact_type"] == "RISK"
+    # Cạnh ánh xạ dữ liệu không lan truyền sự cố và không trở thành ảnh hưởng RISK.
+    field_impacts = [i for i in impacts if i["node_type"] == "field"]
+    assert field_impacts == []
+    # Chỉ còn phụ thuộc sản xuất thực sự được lan truyền.
+    assert {(i["node_type"], i["node_id"]) for i in impacts} == {("process", 1)}
 
 
 def test_mapping_edge_does_not_propagate():
@@ -61,7 +64,17 @@ def test_mapping_edge_does_not_propagate():
     ]
     impacts = traverse(edges, "machine", 1, {"production_dependency"}, 5)
     nodes = {(i["node_type"], i["node_id"]) for i in impacts}
-    assert ("process", 3) not in nodes  # dataset chỉ là RISK, không lan tiếp
+    assert ("process", 3) not in nodes  # dataset không lan tiếp
+
+
+def test_responsibility_edge_does_not_become_impact():
+    edges = [
+        _edge("machine", 1, "process", 1),
+        _edge("department", 2, "process", 1, "department_responsibility"),
+    ]
+    impacts = traverse(edges, "machine", 1, {"production_dependency"}, 5)
+    # Cạnh trách nhiệm bộ phận dùng để xác định bộ phận liên quan, không phải ảnh hưởng.
+    assert all(i["node_type"] != "department" for i in impacts)
 
 
 def test_evaluate_condition_operators():

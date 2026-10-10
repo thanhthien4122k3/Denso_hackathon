@@ -1,5 +1,3 @@
-"""Entry point duy nhất để khởi động ứng dụng: python run.py"""
-
 import sys
 from pathlib import Path
 from app.main import app
@@ -37,3 +35,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

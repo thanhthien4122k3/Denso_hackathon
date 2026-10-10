@@ -328,7 +328,10 @@ class ContextRepository:
     @_db_errors
     def list_users(self):
         with self._conn() as conn, conn.cursor() as cur:
-            cur.execute("SELECT * FROM production.users ORDER BY id")
+            cur.execute(
+                "SELECT id, username, display_name, active, is_simulated, created_at "
+                "FROM production.users ORDER BY id"
+            )
             return cur.fetchall()
 
     @_db_errors

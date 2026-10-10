@@ -2,6 +2,7 @@
 
 from fastapi import APIRouter, Depends, Query
 
+from app.auth import require_roles
 from app.repositories.context_repository import ContextRepository
 from app.settings import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 
@@ -73,5 +74,6 @@ def create_experience(payload: dict, repo: ContextRepository = Depends(get_repo)
 
 
 @router.get("/users")
-def list_users(repo: ContextRepository = Depends(get_repo)):
+def list_users(user: dict = Depends(require_roles("ADMIN")),
+               repo: ContextRepository = Depends(get_repo)):
     return {"success": True, "message": "OK", "data": repo.list_users()}

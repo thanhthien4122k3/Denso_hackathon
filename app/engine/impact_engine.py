@@ -52,29 +52,6 @@ def traverse(
             }
             queue.append((ntype, nid, depth + 1, new_path))
 
-    # Rủi ro tiềm năng: cạnh không truyền tác động (ánh xạ, trách nhiệm bộ phận...)
-    nodes_to_check = [(source_type, source_id)] + [
-        (impact["node_type"], impact["node_id"]) for impact in impacts.values()
-    ]
-    for node_type, node_id in nodes_to_check:
-        for edge in adj.get((node_type, node_id), []):
-            if edge["kind"] in propagate_kinds:
-                continue
-            ntype, nid = edge["target_type"], edge["target_id"]
-            if (ntype, nid) in impacts or (ntype, nid) == (source_type, source_id):
-                continue
-            step = _step(node_type, node_id, edge)
-            base_path = impacts.get((node_type, node_id), {}).get("path", [])
-            impacts[(ntype, nid)] = {
-                "node_type": ntype,
-                "node_id": nid,
-                "impact_type": "RISK",
-                "relation_depth": None,
-                "evidence_status": "POTENTIAL",
-                "path": base_path + [step],
-                "edge_kind": edge["kind"],
-            }
-
     return list(impacts.values())
 
 

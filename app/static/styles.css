@@ -95,6 +95,12 @@ button { font-family: inherit; }
 }
 .mode-btn.active { background: var(--c-brand); color: #fff; }
 .mode-btn + .mode-btn { border-left: 1px solid var(--c-border); }
+.mode-label {
+  display: none; align-items: center; gap: 6px; border: 1px solid var(--c-border);
+  border-radius: var(--r-md); padding: 6px 12px; font-size: var(--fs-sm); font-weight: 600;
+  color: var(--c-text); background: var(--c-surface); cursor: pointer; min-height: 36px;
+}
+.mode-label::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--c-brand); }
 
 /* ===== layout & sidebar ===== */
 .layout { display: flex; min-height: calc(100vh - var(--header-h)); }
@@ -184,8 +190,9 @@ body.sidebar-collapsed .nav-item { justify-content: center; padding: 9px; }
 .field .unit-suffix { position: relative; }
 .field .unit-suffix input { padding-right: 44px; }
 .field .unit-suffix .unit { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); color: var(--c-text-muted); font-size: var(--fs-sm); }
-.fieldset { border: 1px solid var(--c-border); border-radius: var(--r-md); padding: var(--sp-3); margin: var(--sp-3) 0; }
+.fieldset { border: 1px solid var(--c-border); border-radius: var(--r-md); padding: var(--sp-3); margin: var(--sp-3) 0; grid-column: span 2; }
 .fieldset legend { font-size: var(--fs-sm); font-weight: 700; color: var(--c-text-muted); padding: 0 var(--sp-2); }
+.form-actions { grid-column: span 2; margin-top: 8px; }
 
 input, select, textarea {
   font: inherit; padding: 9px 10px; border: 1px solid var(--c-border);
@@ -360,11 +367,15 @@ td .cell-sub { font-size: var(--fs-xs); color: var(--c-text-faint); margin-top: 
 /* ===== responsive ===== */
 @media (max-width: 900px) {
   .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
+  .fieldset, .form-actions { grid-column: span 1; }
+  [style*="grid-column: span 2"] { grid-column: span 1 !important; }
   .header-toggle { display: inline-flex; }
   .collapse-toggle { display: none; }
   .page-title { font-size: var(--fs-md); }
   .header-center { display: none; }
   .mode-toggle { display: none; }
+  .mode-label { display: inline-flex; }
+  .header-action { min-height: 36px; padding: 6px 10px; }
   .sidebar {
     position: fixed; top: var(--header-h); left: 0; bottom: 0; z-index: 50;
     transform: translateX(-100%); transition: transform .2s ease; width: 280px;

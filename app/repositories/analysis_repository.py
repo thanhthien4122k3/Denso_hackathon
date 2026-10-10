@@ -28,24 +28,96 @@ class AnalysisRepository:
     @_db_errors
     def create_run(self, data) -> dict:
         params = {**data, "input": Jsonb(data.get("input") or {})}
+        cols = ["source_type", "source_id", "input", "rule_version", "is_simulated"]
+        if data.get("result") is not None:
+            cols.append("result")
+            params["result"] = Jsonb(data["result"])
+        sql = (
+            "INSERT INTO production.analysis_runs (" + ", ".join(cols) + ") VALUES ("
+            + ", ".join(f"%({c})s" for c in cols) + ") RETURNING *"
+        )
         with self._conn() as conn, conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO production.analysis_runs (source_type, source_id, input, "
-                "rule_version, is_simulated) VALUES (%(source_type)s, %(source_id)s, "
-                "%(input)s, %(rule_version)s, %(is_simulated)s) RETURNING *",
-                params,
-            )
+            cur.execute(sql, params)
             row = cur.fetchone()
             conn.commit()
         return row
 
     @_db_errors
-    def list_runs(self, page, page_size, source_type=None):
+    def save_run(self, data, impacts, hypotheses, actions, related) -> tuple[dict, list[int]]:
+        """Lưu run + các kết quả con trong MỘT transaction (lỗi giữa chừng phải rollback)."""
+        params = {**data, "input": Jsonb(data.get("input") or {})}
+        cols = ["source_type", "source_id", "input", "rule_version", "is_simulated"]
+        if data.get("result") is not None:
+            cols.append("result")
+            params["result"] = Jsonb(data["result"])
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO production.analysis_runs (" + ", ".join(cols) + ") VALUES ("
+                + ", ".join(f"%({c})s" for c in cols) + ") RETURNING *",
+                params,
+            )
+            run = cur.fetchone()
+            run_id = run["id"]
+
+            for item in impacts:
+                cur.execute(
+                    "INSERT INTO production.analysis_impacts (run_id, node_type, node_id, "
+                    "node_name, impact_type, relation_depth, evidence_status, path, "
+                    "evidence, rule_id, assumptions, missing_info, departments) "
+                    "VALUES (%(run_id)s, %(node_type)s, %(node_id)s, %(node_name)s, "
+                    "%(impact_type)s, %(relation_depth)s, %(evidence_status)s, %(path)s, "
+                    "%(evidence)s, %(rule_id)s, %(assumptions)s, %(missing_info)s, "
+                    "%(departments)s)",
+                    {
+                        "run_id": run_id,
+                        **item,
+                        "relation_depth": item.get("relation_depth"),
+                        "evidence_status": item.get("evidence_status"),
+                        "path": Jsonb(item.get("path") or []),
+                        "departments": Jsonb(item.get("departments") or []),
+                    },
+                )
+
+            for item in hypotheses:
+                cur.execute(
+                    "INSERT INTO production.analysis_hypotheses (run_id, content, evidence, "
+                    "check_more, rule_id, priority) VALUES (%(run_id)s, %(content)s, "
+                    "%(evidence)s, %(check_more)s, %(rule_id)s, %(priority)s)",
+                    {"run_id": run_id, **item},
+                )
+
+            action_ids = []
+            for item in actions:
+                cur.execute(
+                    "INSERT INTO production.analysis_actions (run_id, department_id, "
+                    "department_name, action, priority) VALUES (%(run_id)s, %(department_id)s, "
+                    "%(department_name)s, %(action)s, %(priority)s) RETURNING id",
+                    {"run_id": run_id, **item},
+                )
+                action_ids.append(cur.fetchone()["id"])
+
+            for item in related:
+                cur.execute(
+                    "INSERT INTO production.analysis_related_incidents "
+                    "(run_id, related_incident_id, match_criteria, note) "
+                    "VALUES (%(run_id)s, %(related_incident_id)s, %(match_criteria)s, %(note)s)",
+                    {"run_id": run_id, **item},
+                )
+
+            conn.commit()
+        return run, action_ids
+
+    @_db_errors
+    def list_runs(self, page, page_size, source_type=None, source_id=None):
         params = {"limit": page_size, "offset": (page - 1) * page_size}
-        where = ""
+        conds = []
         if source_type:
-            where = " WHERE source_type = %(source_type)s"
+            conds.append("source_type = %(source_type)s")
             params["source_type"] = source_type
+        if source_id is not None:
+            conds.append("source_id = %(source_id)s")
+            params["source_id"] = source_id
+        where = (" WHERE " + " AND ".join(conds)) if conds else ""
         with self._conn() as conn, conn.cursor() as cur:
             cur.execute(
                 f"SELECT COUNT(*) AS total FROM production.analysis_runs{where}", params

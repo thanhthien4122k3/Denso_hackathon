@@ -166,6 +166,9 @@ hoặc dùng bộ tài khoản demo (xem bên dưới).
 Xem tài liệu đầy đủ: **`docs/USAGE_GUIDE.md`** (khởi động → tạo tài khoản → đăng nhập →
 nạp mô phỏng → nhập lỗi → phân tích → xác minh → đóng hồ sơ).
 
+Mô tả chi tiết từng trường trong **Bản đồ liên kết** và **Phân tích tác động**:
+**`docs/ANALYSIS_REFERENCE.md`**.
+
 ---
 
 ## C. Dùng thử ngay (3 bước)

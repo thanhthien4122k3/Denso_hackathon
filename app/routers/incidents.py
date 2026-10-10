@@ -93,19 +93,26 @@ def create_cause(incident_id: int, payload: dict, request: Request,
                  ctx: ContextRepository = Depends(get_context_repo)):
     if payload.get("kind") == "CONFIRMED":
         _require_role(request, ("COORDINATOR",))
-    row = service.create_cause(incident_id, payload)
+    row = service.create_cause(incident_id, payload, user=user)
     ctx.add_history(incident_id, "CAUSE_" + str(payload.get("kind", "HYPOTHESIS")),
                     user["username"], {"content": payload.get("content")})
     return {"success": True, "message": "Đã thêm.", "data": row}
 
 
 @router.put("/causes/{cause_id}")
-def update_cause(cause_id: int, payload: dict, service: IncidentService = Depends(get_service)):
-    return {"success": True, "message": "Đã cập nhật.", "data": service.update_cause(cause_id, payload)}
+def update_cause(cause_id: int, payload: dict, request: Request,
+                 service: IncidentService = Depends(get_service),
+                 user: dict = Depends(current_user)):
+    if payload.get("kind") == "CONFIRMED":
+        _require_role(request, ("COORDINATOR",))
+    return {"success": True, "message": "Đã cập nhật.", "data": service.update_cause(cause_id, payload, user=user)}
 
 
 @router.delete("/causes/{cause_id}")
-def delete_cause(cause_id: int, service: IncidentService = Depends(get_service)):
+def delete_cause(cause_id: int, request: Request,
+                 service: IncidentService = Depends(get_service),
+                 user: dict = Depends(current_user)):
+    _require_role(request, ("COORDINATOR",))
     service.delete_cause(cause_id)
     return {"success": True, "message": "Đã xóa.", "data": None}
 
@@ -154,12 +161,9 @@ def recover(incident_id: int, payload: dict, request: Request,
             user: dict = Depends(current_user),
             ctx: ContextRepository = Depends(get_context_repo)):
     _require_role(request, ("COORDINATOR",))
-    row = service.update(incident_id, {
-        "recovered_at": payload.get("recovered_at"),
-        "recovered_by": payload.get("recovered_by") or user["username"],
-        "status": payload.get("status", "MITIGATING"),
-    })
-    ctx.add_history(incident_id, "RECOVERED", user["username"], {"recovered_at": payload.get("recovered_at")})
+    row = service.recover(incident_id, payload.get("recovered_at"), user)
+    ctx.add_history(incident_id, "RECOVERED", user["username"],
+                    {"recovered_at": payload.get("recovered_at"), "note": payload.get("note")})
     return {"success": True, "message": "Đã xác nhận khôi phục.", "data": row}
 
 
@@ -169,13 +173,9 @@ def close(incident_id: int, payload: dict, request: Request,
           user: dict = Depends(current_user),
           ctx: ContextRepository = Depends(get_context_repo)):
     _require_role(request, ("COORDINATOR",))
-    row = service.update(incident_id, {
-        "status": "RESOLVED",
-        "closed_at": payload.get("closed_at"),
-        "closed_by": payload.get("closed_by") or user["username"],
-        "resolution_summary": payload.get("resolution_summary"),
-        "root_cause_status": payload.get("root_cause_status", "UNKNOWN"),
-    })
+    row = service.close(incident_id, payload.get("resolution_summary"),
+                        payload.get("root_cause_status", "UNKNOWN"), user,
+                        payload.get("closed_at"))
     ctx.add_history(incident_id, "CLOSED", user["username"],
                     {"resolution_summary": payload.get("resolution_summary")})
     return {"success": True, "message": "Đã đóng hồ sơ.", "data": row}
