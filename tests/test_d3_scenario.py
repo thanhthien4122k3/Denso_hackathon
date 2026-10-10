@@ -116,6 +116,38 @@ def test_d3_report_error_and_analysis(d3):
     assert {"MAINT", "PROD", "PLAN"} <= dept_codes
 
 
+def test_run_snapshot_contract_and_action_ids(d3):
+    machine = _by_code(d3, "/api/catalog/machine", "M10")
+    inc = d3.post("/api/incidents", json={
+        "code": "INC-SNAP-01", "title": "Snapshot", "incident_type": "MACHINE_STOP",
+        "source_object_type": "machine", "source_object_id": machine["id"],
+        "start_time": "2026-10-06T10:00:00+07:00", "severity": "HIGH",
+        "description": "test snapshot", "status": "OPEN",
+        "request_id": "550e8400-e29b-41d4-a716-4466554400aa",
+        "is_simulated": True,
+    })
+    assert inc.status_code == 201
+    iid = inc.json()["data"]["id"]
+    res = d3.post("/api/analysis/run", json={
+        "incident_id": iid, "max_depth": 5, "duration_minutes": 15,
+    }).json()["data"]
+    assert res["snapshot_available"] is True
+    assert res["run_id"]
+    assert res["actions"] and all(a.get("id") for a in res["actions"])
+
+    # Đọc lại lịch sử: cùng cấu trúc, giữ ID action và bối cảnh/ước tính.
+    got = d3.get(f"/api/analysis/runs/{res['run_id']}").json()["data"]
+    assert got["snapshot_available"] is True
+    assert got["incident_id"] == iid
+    assert got["context"] is not None
+    assert got["capacity_estimate"] is not None
+    assert got["actions"] and all(a.get("id") for a in got["actions"])
+
+    # Lọc lịch sử phân tích theo sự cố ở backend (không lọc toàn hệ thống ở frontend).
+    filtered = d3.get(f"/api/analysis/runs?source_type=INCIDENT&source_id={iid}").json()["data"]["items"]
+    assert any(r["id"] == res["run_id"] for r in filtered)
+
+
 def test_d3_task_from_action_no_duplicate(d3):
     machine = _by_code(d3, "/api/catalog/machine", "M10")
     incidents = d3.get("/api/incidents?search=INC-DEMO-01").json()["data"]["items"]

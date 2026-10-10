@@ -1,6 +1,6 @@
 """Nghiệp vụ sự cố: tạo (chống trùng), cập nhật, nguyên nhân, liên kết."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import UUID
 
 from app.exceptions import DuplicateCodeError, NotFoundError, ValidationFailedError
@@ -120,8 +120,8 @@ class IncidentService:
             "title": "str", "incident_type": "enum_type", "source_object_type": "str",
             "source_object_id": "int", "start_time": "dt", "end_time": "dt",
             "severity": "enum_sev", "status": "enum_status", "description": "str",
-            "assigned_department_id": "int", "recovered_at": "dt", "recovered_by": "str",
-            "closed_at": "dt", "closed_by": "str", "resolution_summary": "str",
+            "assigned_department_id": "int", "recovered_at": "dt",
+            "closed_at": "dt", "resolution_summary": "str",
             "root_cause_status": "enum_rcs",
         }
         for field, ftype in mapping.items():
@@ -155,7 +155,7 @@ class IncidentService:
         return self.repository.get(incident_id)
 
     # causes
-    def create_cause(self, incident_id, data):
+    def create_cause(self, incident_id, data, user=None):
         if self.repository.get(incident_id) is None:
             raise NotFoundError("Sự cố không tồn tại.")
         content = (data.get("content") or "").strip()
@@ -164,6 +164,12 @@ class IncidentService:
         kind = data.get("kind", "HYPOTHESIS")
         if kind not in CAUSE_KINDS:
             raise ValidationFailedError(f"kind phải thuộc {sorted(CAUSE_KINDS)}.")
+        if kind == "CONFIRMED":
+            confirmed_by = user["username"] if user else None
+            confirmed_at = datetime.now(timezone.utc)
+        else:
+            confirmed_by = None
+            confirmed_at = None
         return self.repository.create_cause({
             "incident_id": incident_id,
             "content": content,
@@ -171,18 +177,76 @@ class IncidentService:
             "evidence": (data.get("evidence") or "").strip() or None,
             "rule_id": (data.get("rule_id") or "").strip() or None,
             "priority": (data.get("priority") or "").strip() or None,
-            "confirmed_by": (data.get("confirmed_by") or "").strip() or None,
-            "confirmed_at": _dt(data.get("confirmed_at")),
+            "confirmed_by": confirmed_by,
+            "confirmed_at": confirmed_at,
         })
 
     def list_causes(self, incident_id):
         return self.repository.list_causes(incident_id)
 
-    def update_cause(self, cause_id, data):
-        return self.repository.update_cause(cause_id, data)
+    def update_cause(self, cause_id, data, user=None):
+        cleaned = {}
+        if "content" in data:
+            cleaned["content"] = (data.get("content") or "").strip() or None
+        if "kind" in data:
+            kind = data.get("kind")
+            if kind not in CAUSE_KINDS:
+                raise ValidationFailedError(f"kind phải thuộc {sorted(CAUSE_KINDS)}.")
+            cleaned["kind"] = kind
+        if "evidence" in data:
+            cleaned["evidence"] = (data.get("evidence") or "").strip() or None
+        if "rule_id" in data:
+            cleaned["rule_id"] = (data.get("rule_id") or "").strip() or None
+        if "priority" in data:
+            cleaned["priority"] = (data.get("priority") or "").strip() or None
+        # Không cho client giả mạo người xác nhận/thời điểm xác nhận.
+        if cleaned.get("kind") == "CONFIRMED":
+            cleaned["confirmed_by"] = user["username"] if user else None
+            cleaned["confirmed_at"] = datetime.now(timezone.utc)
+        elif "kind" in data and data["kind"] != "CONFIRMED":
+            cleaned["confirmed_by"] = None
+            cleaned["confirmed_at"] = None
+        return self.repository.update_cause(cause_id, cleaned)
 
     def delete_cause(self, cause_id):
         return self.repository.delete_cause(cause_id)
+
+    # khôi phục và đóng hồ sơ (người thực hiện lấy từ session, không tin client)
+    def recover(self, incident_id, recovered_at, user):
+        incident = self.repository.get(incident_id)
+        if incident is None:
+            raise NotFoundError("Sự cố không tồn tại.")
+        recovered = _dt(recovered_at)
+        start = incident.get("start_time")
+        if recovered is not None and start is not None and recovered < start:
+            raise ValidationFailedError("Thời điểm khôi phục phải sau thời điểm bắt đầu sự cố.")
+        return self.repository.update(incident_id, {
+            "recovered_at": recovered,
+            "recovered_by": user["username"],
+            "status": "MITIGATING",
+        })
+
+    def close(self, incident_id, resolution_summary, root_cause_status, user, closed_at=None):
+        incident = self.repository.get(incident_id)
+        if incident is None:
+            raise NotFoundError("Sự cố không tồn tại.")
+        summary = (resolution_summary or "").strip()
+        if not summary:
+            raise ValidationFailedError("Cần nhập tóm tắt kết quả xử lý khi đóng hồ sơ.")
+        closed = _dt(closed_at) if closed_at else datetime.now(timezone.utc)
+        start = incident.get("start_time")
+        if start is not None and closed < start:
+            raise ValidationFailedError("Thời điểm đóng phải sau thời điểm bắt đầu sự cố.")
+        recovered = incident.get("recovered_at")
+        if recovered is not None and closed < recovered:
+            raise ValidationFailedError("Thời điểm đóng phải sau thời điểm khôi phục.")
+        return self.repository.update(incident_id, {
+            "status": "RESOLVED",
+            "closed_at": closed,
+            "closed_by": user["username"],
+            "resolution_summary": summary,
+            "root_cause_status": root_cause_status or "UNKNOWN",
+        })
 
     # links
     def create_link(self, incident_id, data):

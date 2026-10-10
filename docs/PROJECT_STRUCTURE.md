@@ -105,6 +105,7 @@ Denso_production_input/
 │   ├── DATAMODEL.md
 │   ├── SQL_READONLY.md
 │   ├── USAGE_GUIDE.md
+│   ├── ANALYSIS_REFERENCE.md
 └── tests/                      # Kiểm thử (pytest)
     ├── __init__.py
     ├── conftest.py

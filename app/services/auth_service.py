@@ -99,7 +99,7 @@ class AuthService:
         row = self.repository.set_active(user_id, active)
         if not active:
             self.repository.revoke_user_sessions(user_id)
-        return row
+        return self._to_public(row)
 
     def reset_password(self, user_id, new_password):
         self.repository.set_password(user_id, hash_password(new_password))

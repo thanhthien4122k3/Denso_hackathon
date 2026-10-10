@@ -50,14 +50,54 @@
     clearTimeout(t._timer); t._timer = setTimeout(() => { t.className = "toast"; }, 4200);
   }
 
+  /* Vòng đời trang: mỗi lần render có token riêng; request/continuation chỉ
+     cập nhật DOM nếu token vẫn là token hiện tại. */
+  let renderToken = 0;
+  let activeRenderToken = 0;
+  function pageCurrent() { return activeRenderToken === renderToken; }
+
+  let modalDirty = false;
+  let modalOpener = null;
+
   function openModal(title, bodyNode) {
     $("#modal-title").textContent = title;
     const b = $("#modal-body"); b.textContent = ""; b.appendChild(bodyNode);
     $("#modal").classList.remove("hidden");
+    modalDirty = false;
+    modalOpener = document.activeElement || null;
+    const first = $("#modal").querySelector("input, select, textarea, button");
+    if (first) first.focus();
   }
-  function closeModal() { $("#modal").classList.add("hidden"); }
-  $("#modal-close").addEventListener("click", closeModal);
-  $("#modal").addEventListener("click", (e) => { if (e.target.id === "modal") closeModal(); });
+  function closeModal() {
+    $("#modal").classList.add("hidden");
+    $("#modal-body").textContent = "";
+    if (modalOpener && typeof modalOpener.focus === "function") modalOpener.focus();
+    modalOpener = null;
+    modalDirty = false;
+  }
+  function markModalDirty() { modalDirty = true; }
+  function confirmDiscard() {
+    if (modalDirty && !window.confirm("Có thay đổi chưa lưu. Bỏ thay đổi?")) return false;
+    return true;
+  }
+  function requestCloseModal() {
+    if (!confirmDiscard()) return;
+    closeModal();
+  }
+  $("#modal-close").addEventListener("click", requestCloseModal);
+  $("#modal").addEventListener("click", (e) => { if (e.target.id === "modal") requestCloseModal(); });
+  document.addEventListener("keydown", (e) => {
+    if ($("#modal").classList.contains("hidden")) return;
+    if (e.key === "Escape") { e.preventDefault(); requestCloseModal(); return; }
+    if (e.key === "Tab") {
+      const focusables = Array.from($("#modal").querySelectorAll("input, select, textarea, button, a[href]"))
+        .filter((el) => !el.disabled && el.offsetParent !== null);
+      if (!focusables.length) return;
+      const first = focusables[0], last = focusables[focusables.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    }
+  });
 
   function uuid() {
     if (typeof crypto !== "undefined" && crypto.randomUUID) { try { return crypto.randomUUID(); } catch (e) {} }
@@ -158,7 +198,9 @@
       tbody.appendChild(tr);
     });
     table.appendChild(tbody);
-    container.appendChild(table);
+    const wrap = h("div", { class: "table-wrap" });
+    wrap.appendChild(table);
+    container.appendChild(wrap);
   }
 
   function pagination(el, page, totalPages, onPage) {
@@ -200,47 +242,97 @@
   function formBuilder(fields, onSubmit, initial) {
     const form = h("form", { class: "grid grid-2" });
     const controls = {};
-    let lastGroup = null, fs = null;
+    let lastGroup = null, fs = null, groupInner = null;
     fields.forEach((f) => {
-      if (f.group && f.group !== lastGroup) {
-        fs = h("fieldset", { class: "fieldset", style: "grid-column: span 2;" });
+      // Chỉ có group, không có name => tiêu đề nhóm, không tạo input/payload.
+      if (f.group && !f.name) {
+        fs = h("fieldset", { class: "fieldset" });
         fs.appendChild(h("legend", { text: f.group }));
-        fs.appendChild(h("div", { class: "grid grid-2" }));
+        groupInner = h("div", { class: "grid grid-2" });
+        fs.appendChild(groupInner);
+        form.appendChild(fs);
+        lastGroup = f.group;
+        return;
+      }
+      if (f.group && f.group !== lastGroup) {
+        fs = h("fieldset", { class: "fieldset" });
+        fs.appendChild(h("legend", { text: f.group }));
+        groupInner = h("div", { class: "grid grid-2" });
+        fs.appendChild(groupInner);
         form.appendChild(fs);
         lastGroup = f.group;
       }
+      const hasInit = initial && initial[f.name] !== undefined && initial[f.name] !== null;
+      const initVal = hasInit ? initial[f.name] : (f.default !== undefined ? f.default : "");
       let control;
-      if (f.type === "select") control = selectInput(f.name, f.options || [], initial && initial[f.name]);
-      else if (f.type === "checkbox") control = h("input", { name: f.name, type: "checkbox", checked: initial ? !!initial[f.name] : !!f.default });
-      else if (f.type === "textarea") { control = h("textarea", { name: f.name, rows: 3 }); control.value = (initial && initial[f.name]) || ""; }
-      else control = h("input", { name: f.name, value: (initial && initial[f.name]) || "", type: f.type === "number" ? "number" : (f.type === "date" ? "date" : (f.type === "datetime" ? "datetime-local" : "text")), inputmode: f.type === "number" ? "numeric" : undefined, min: f.type === "number" && f.min !== undefined ? f.min : undefined, placeholder: f.placeholder || "" });
+      if (f.type === "select") control = selectInput(f.name, f.options || [], initVal);
+      else if (f.type === "checkbox") {
+        control = h("input", { name: f.name, type: "checkbox" });
+        control.checked = !!(hasInit ? initial[f.name] : f.default);
+      } else if (f.type === "textarea") {
+        control = h("textarea", { name: f.name, rows: f.rows || 3 });
+        control.value = initVal === null || initVal === undefined ? "" : String(initVal);
+      } else {
+        const inputType = f.type === "number" ? "number"
+          : (f.type === "date" ? "date"
+          : (f.type === "datetime" ? "datetime-local"
+          : (f.type === "password" ? "password" : "text")));
+        control = h("input", { name: f.name, type: inputType });
+        if (f.type === "number") control.setAttribute("inputmode", "numeric");
+        control.value = initVal === null || initVal === undefined ? "" : String(initVal);
+        if (f.required) control.setAttribute("required", "");
+        if (f.min !== undefined) control.setAttribute("min", f.min);
+        if (f.max !== undefined) control.setAttribute("max", f.max);
+        if (f.step !== undefined) control.setAttribute("step", f.step);
+        if (f.placeholder) control.setAttribute("placeholder", f.placeholder);
+        if (f.autocomplete !== undefined) control.setAttribute("autocomplete", f.autocomplete);
+      }
       controls[f.name] = control;
       const fieldEl = field(f.label, control, f.required, f.hint);
-      if (fs) fs.querySelector(".grid").appendChild(fieldEl);
+      if (groupInner) groupInner.appendChild(fieldEl);
       else form.appendChild(fieldEl);
     });
-    const actions = h("div", { class: "toolbar", style: "grid-column: span 2; margin-top: 8px;" });
+    const actions = h("div", { class: "toolbar form-actions" });
     const submit = h("button", { type: "submit", class: "btn btn-primary", text: "Lưu" });
-    const cancel = h("button", { type: "button", class: "btn btn-secondary", text: "Hủy", onclick: closeModal });
+    const cancel = h("button", { type: "button", class: "btn btn-secondary", text: "Hủy", onclick: requestCloseModal });
     actions.appendChild(submit); actions.appendChild(cancel);
     form.appendChild(actions);
+    form.addEventListener("input", markModalDirty);
+    form.addEventListener("change", markModalDirty);
     form.addEventListener("submit", (e) => {
       e.preventDefault();
       const data = {};
+      let firstInvalid = null;
       fields.forEach((f) => {
+        if (!f.name) return;
         const c = controls[f.name];
         let v = c.type === "checkbox" ? c.checked : (c.value === "" ? null : c.value);
-        if (f.type === "number" && v !== null) v = Number(v);
+        if (f.type === "number" && v !== null && v !== "") v = Number(v);
         data[f.name] = v;
+        const errEl = c.closest(".field") ? c.closest(".field").querySelector(".field-error") : null;
+        if (errEl) errEl.textContent = "";
+        let invalid = false;
+        if (f.required && (v === null || v === "")) invalid = true;
+        if (f.type === "number" && v !== null && v !== "" && (isNaN(v) || (f.min !== undefined && v < f.min) || (f.max !== undefined && v > f.max))) invalid = true;
+        if (invalid) {
+          if (errEl) errEl.textContent = "Giá trị không hợp lệ.";
+          c.classList.add("invalid");
+          if (!firstInvalid) firstInvalid = c;
+        } else {
+          c.classList.remove("invalid");
+        }
       });
+      if (firstInvalid) { firstInvalid.focus(); return; }
       onSubmit(data, submit);
     });
     return { form, setSubmitting: (flag) => { submit.disabled = flag; submit.textContent = flag ? "Đang lưu..." : "Lưu"; } };
   }
   function field(label, control, required, hint) {
     const w = h("div", { class: "field" });
-    w.appendChild(h("label", { text: label + (required ? " *" : "") }));
+    if (!control.id) control.id = "fld-" + Math.random().toString(36).slice(2, 10);
+    w.appendChild(h("label", { for: control.id, text: label + (required ? " *" : "") }));
     w.appendChild(control);
+    w.appendChild(h("div", { class: "field-error" }));
     if (hint) w.appendChild(h("div", { class: "hint", text: hint }));
     return w;
   }
@@ -279,6 +371,7 @@
     v.textContent = "";
     v.appendChild(h("div", { class: "section-head" }, [h("div", {}, [h("h2", { text: "Danh mục sản xuất" }), h("div", { class: "desc", text: "Bộ phận, chuyền, công đoạn, máy, vật tư, sản phẩm, lệnh và lot." })])]));
     const keys = await loadCatalogKeys();
+    if (!pageCurrent()) return;
     const tabs = h("div", { class: "tabs" });
     const card = h("div", { class: "card" });
     v.appendChild(h("div", { class: "card" }, [tabs, card]));
@@ -359,7 +452,8 @@
     const views = { sources: viewSources, datasets: viewDatasets, fields: viewFields, flows: viewFlows };
     const labels = { sources: "Hệ thống nguồn", datasets: "Dataset", fields: "Trường dữ liệu", flows: "Luồng dữ liệu" };
     let active = "sources";
-    function setView(k) { active = k; $$("button", tabs).forEach(b => b.classList.toggle("active", b.dataset.v === k)); body.textContent = ""; views[k](body); }
+    let tabToken = 0;
+    function setView(k) { active = k; const t = ++tabToken; $$("button", tabs).forEach(b => b.classList.toggle("active", b.dataset.v === k)); body.textContent = ""; views[k](body, t, () => t === tabToken); }
     Object.keys(views).forEach((k) => tabs.appendChild(h("button", { "data-v": k, class: k === active ? "active" : "", text: labels[k], onclick: () => setView(k) })));
     setView(active);
   }
@@ -453,9 +547,10 @@
     }
     load();
   }
-  async function viewFields(body) {
+  async function viewFields(body, token, isActive) {
     const toolbar = h("div", { class: "toolbar" }); const listWrap = h("div");
     const datasets = (await api("/api/system/datasets?page_size=200")).data.items;
+    if (!pageCurrent() || (isActive && !isActive())) return;
     const sel = selectInput("ds", datasets.map(r => ({ value: r.id, label: r.code })), datasets[0] && datasets[0].id);
     toolbar.appendChild(field("Dataset", sel));
     toolbar.appendChild(h("button", { class: "btn btn-primary", text: "Thêm trường", onclick: () => fieldForm(sel.value) }));
@@ -591,11 +686,14 @@
     const head = h("div", { class: "card-title", style: "margin-top:16px;" }, [h("span", { text: "Bản ghi gần nhất" })]);
     const listWrap = h("div");
     body.appendChild(h("div", { class: "card" }, [head, listWrap]));
-    api("/api/production-records?page_size=10").then(d => renderTable(listWrap, [
-      { key: "id", label: "ID" }, { key: "production_date", label: "Ngày" }, { key: "shift", label: "Ca" },
-      { key: "line_code", label: "Chuyền" }, { key: "process_code", label: "Công đoạn" }, { key: "lot_code", label: "Lot" },
-      { key: "good_quantity", label: "Đạt" }, { key: "defect_quantity", label: "Lỗi" },
-    ], d.data.items)).catch(() => {});
+    api("/api/production-records?page_size=10").then(d => {
+      if (!pageCurrent()) return;
+      renderTable(listWrap, [
+        { key: "id", label: "ID" }, { key: "production_date", label: "Ngày" }, { key: "shift", label: "Ca" },
+        { key: "line_code", label: "Chuyền" }, { key: "process_code", label: "Công đoạn" }, { key: "lot_code", label: "Lot" },
+        { key: "good_quantity", label: "Đạt" }, { key: "defect_quantity", label: "Lỗi" },
+      ], d.data.items);
+    }).catch((e) => { if (pageCurrent()) listWrap.appendChild(errorBox(e.message, viewProduction)); });
   }
 
   async function viewStates(body) {
@@ -752,9 +850,14 @@
     const card = h("div", { class: "card" });
     v.appendChild(card);
     const toolbar = h("div", { class: "toolbar" });
+    const saved = pageState.incidents || {};
     const search = h("input", { placeholder: "Tìm theo mã hoặc tiêu đề..." });
-    const statusSel = selectInput("status", ["OPEN", "INVESTIGATING", "MITIGATING", "RESOLVED"].map(x => ({ value: x, label: { OPEN: "Đang mở", INVESTIGATING: "Đang điều tra", MITIGATING: "Đang xử lý", RESOLVED: "Đã giải quyết" }[x] })));
-    const typeSel = selectInput("type", ["MACHINE_STOP", "QUALITY", "MATERIAL_SHORTAGE", "DATA_DELAY", "OTHER"].map(x => ({ value: x, label: typeLabel(x) })));
+    search.value = saved.search || "";
+    const statusSel = selectInput("status", ["OPEN", "INVESTIGATING", "MITIGATING", "RESOLVED"].map(x => ({ value: x, label: { OPEN: "Đang mở", INVESTIGATING: "Đang điều tra", MITIGATING: "Đang xử lý", RESOLVED: "Đã giải quyết" }[x] })), saved.status || "");
+    const typeSel = selectInput("type", ["MACHINE_STOP", "QUALITY", "MATERIAL_SHORTAGE", "DATA_DELAY", "OTHER"].map(x => ({ value: x, label: typeLabel(x) })), saved.type || "");
+    // Áp dụng filter từ URL (ví dụ dashboard trỏ đến sự cố chưa đóng).
+    const qStatus = params.params.get("status");
+    if (qStatus && ["OPEN", "INVESTIGATING", "MITIGATING", "RESOLVED"].includes(qStatus)) statusSel.value = qStatus;
     const listWrap = h("div"); const pag = h("div", { class: "pagination" });
     toolbar.appendChild(h("div", { class: "search-box", style: "min-width:200px;" }, [icon("search"), search]));
     toolbar.appendChild(field("Trạng thái", statusSel));
@@ -762,12 +865,15 @@
     toolbar.appendChild(h("div", { class: "spacer" }));
     toolbar.appendChild(h("button", { class: "btn btn-primary", text: "Tạo sự cố", onclick: () => incidentForm(null) }));
     card.appendChild(toolbar); card.appendChild(listWrap); card.appendChild(pag);
-    const st = { page: 1, tp: 1 };
+    const st = { page: saved.page || 1, tp: 1 };
+    let loadSeq = 0;
     let timer;
+    function persist() { pageState.incidents = { page: st.page, search: search.value, status: statusSel.value, type: typeSel.value }; }
     search.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(() => { st.page = 1; load(); }, 350); });
     statusSel.addEventListener("change", () => { st.page = 1; load(); });
     typeSel.addEventListener("change", () => { st.page = 1; load(); });
     async function load() {
+      const mySeq = ++loadSeq;
       listWrap.textContent = ""; listWrap.appendChild(spinner());
       try {
         const q = new URLSearchParams({ page: st.page, page_size: 15 });
@@ -775,8 +881,17 @@
         if (typeSel.value) q.set("incident_type", typeSel.value);
         if (search.value) q.set("search", search.value);
         const d = await api("/api/incidents?" + q);
+        if (!pageCurrent() || mySeq !== loadSeq) return;
         listWrap.textContent = "";
-        if (!d.data.items.length) { listWrap.appendChild(emptyBox("incidents", "Không có sự cố", "Tạo sự cố đầu tiên hoặc nạp kịch bản mô phỏng.", h("button", { class: "btn btn-primary btn-sm", text: "Tạo sự cố", onclick: () => incidentForm(null) }))); return; }
+        pag.textContent = "";
+        if (!d.data.items.length) {
+          const hasFilter = statusSel.value || typeSel.value || search.value;
+          if (hasFilter) listWrap.appendChild(emptyBox("search", "Không có kết quả phù hợp", "Thử thay đổi bộ lọc hoặc xóa bộ lọc.",
+            h("button", { class: "btn btn-secondary btn-sm", text: "Xóa bộ lọc", onclick: () => { search.value = ""; statusSel.value = ""; typeSel.value = ""; st.page = 1; load(); } })));
+          else listWrap.appendChild(emptyBox("incidents", "Không có sự cố", "Tạo sự cố đầu tiên hoặc nạp kịch bản mô phỏng.", h("button", { class: "btn btn-primary btn-sm", text: "Tạo sự cố", onclick: () => incidentForm(null) })));
+          persist();
+          return;
+        }
         renderTable(listWrap, [
           { key: "code", label: "Mã" }, { key: "title", label: "Tiêu đề" },
           { key: "incident_type", label: "Loại", render: (r) => typeLabel(r.incident_type) },
@@ -786,8 +901,13 @@
         ], d.data.items, (row) => h("td", {}, [
           h("button", { class: "btn btn-sm btn-secondary", text: "Mở", onclick: (e) => { e.stopPropagation(); navigate("incidents/" + row.id); } }),
         ]), (row) => navigate("incidents/" + row.id));
-        st.tp = d.data.pagination.total_pages; pagination(pag, st.page, st.tp, (p) => { st.page = p; load(); });
-      } catch (e) { listWrap.textContent = ""; listWrap.appendChild(errorBox(e.message, load)); }
+        st.tp = d.data.pagination.total_pages;
+        pagination(pag, st.page, st.tp, (p) => { st.page = p; load(); });
+        persist();
+      } catch (e) {
+        if (!pageCurrent() || mySeq !== loadSeq) return;
+        listWrap.textContent = ""; listWrap.appendChild(errorBox(e.message, load));
+      }
     }
     async function incidentForm(row) {
       const depts = await loadOptions("department");
@@ -798,7 +918,7 @@
         { name: "severity", label: "Mức nghiêm trọng", type: "select", options: ["LOW", "MEDIUM", "HIGH", "CRITICAL"].map(x => ({ value: x, label: (SEVERITY[x] || [x])[0] })) },
         { group: "Đối tượng & thời gian" },
         { name: "source_object_type", label: "Loại đối tượng", type: "select", options: ["machine", "lot", "material", "process", "product", "dataset", "line", "order"].map(x => ({ value: x, label: x })) },
-        { name: "source_object_id", label: "ID đối tượng", type: "number", hint: "Nhập ID của máy/lot/vật tư (xem ở Bản đồ liên kết)." },
+        { name: "source_object_id", label: "ID đối tượng", type: "number", min: 1, hint: "Nhập ID của máy/lot/vật tư (xem ở Bản đồ liên kết)." },
         { name: "start_time", label: "Bắt đầu", type: "datetime" }, { name: "end_time", label: "Kết thúc", type: "datetime" },
         { group: "Xử lý" },
         { name: "assigned_department_id", label: "Bộ phận phụ trách", type: "select", options: depts },
@@ -815,25 +935,15 @@
       openModal("Tạo sự cố", fb.form);
     }
     load();
+    if (params.params.get("new") === "1") incidentForm(null);
   }
 
   async function renderIncidentDetail(id) {
     const v = $("#view");
     v.textContent = "";
-    v.appendChild(spinner());
-    let inc, causes, links, runs, ctxData;
-    try {
-      inc = (await api("/api/incidents/" + id)).data;
-      causes = (await api("/api/incidents/" + id + "/causes")).data;
-      links = (await api("/api/incidents/" + id + "/links")).data;
-      runs = (await api("/api/analysis/runs?page_size=50")).data.items.filter(r => r.source_type === "INCIDENT" && r.source_id === Number(id));
-      ctxData = (await api("/api/incidents/" + id + "/context")).data;
-    } catch (e) { v.textContent = ""; v.appendChild(errorBox(e.message, () => renderIncidentDetail(id))); return; }
-    v.textContent = "";
 
     const back = h("button", { class: "btn btn-ghost btn-sm", text: "← Danh sách sự cố", onclick: () => navigate("incidents") });
     v.appendChild(back);
-
     const steps = ["Tạo", "Bằng chứng", "Phân tích", "Công việc", "Giải quyết"];
     const stepper = h("div", { class: "tabs", style: "margin-top:12px;" });
     steps.forEach((s, i) => stepper.appendChild(h("button", { text: (i + 1) + ". " + s, disabled: true })));
@@ -845,49 +955,53 @@
     grid.appendChild(left); grid.appendChild(right);
     v.appendChild(grid);
 
-    // left: summary + evidence + causes + impacts
-    left.appendChild(h("div", { class: "card" }, [
-      h("div", { class: "card-title" }, [h("span", { text: inc.code + " — " + inc.title }), simBadge(inc)]),
-      h("div", { class: "kv-list" }, [
+    // Thông tin chính + thao tác (hiển thị sớm).
+    const summaryCard = h("div", { class: "card" });
+    left.appendChild(summaryCard);
+    const actCard = h("div", { class: "card" });
+    right.appendChild(actCard);
+
+    let inc;
+    try {
+      inc = (await api("/api/incidents/" + id)).data;
+      if (!pageCurrent()) return;
+      summaryCard.appendChild(h("div", { class: "card-title" }, [h("span", { text: inc.code + " — " + inc.title }), simBadge(inc)]));
+      summaryCard.appendChild(h("div", { class: "kv-list" }, [
         kv("Loại", typeLabel(inc.incident_type)), kv("Mức độ", null, severityBadge(inc.severity)),
         kv("Trạng thái", null, statusBadge(inc.status)),
         kv("Bắt đầu", inc.start_time ? fmt(inc.start_time) : "—"),
         kv("Đối tượng", inc.source_object_type ? (inc.source_object_type + " #" + inc.source_object_id) : "—"),
         kv("Bộ phận", inc.assigned_department_id ? ("#" + inc.assigned_department_id) : "—"),
-      ]),
-      inc.description ? h("div", { class: "explain", style: "margin-top:12px;" }, [h("h4", { text: "Quan sát (triệu chứng)" }), h("div", { text: inc.description })]) : null,
-    ]));
-
-    left.appendChild(renderContextCard(id, ctxData));
-
-    // causes
-    const causeCard = h("div", { class: "card" });
-    causeCard.appendChild(h("div", { class: "card-title" }, [h("span", { text: "Nguyên nhân" })]));
-    const causeWrap = h("div");
-    function renderCauses() {
-      causeWrap.textContent = "";
-      if (!causes.length) causeWrap.appendChild(emptyBox("survey", "Chưa có nguyên nhân", "Giả thuyết sẽ xuất hiện sau khi chạy phân tích; nguyên nhân xác nhận do bạn ghi."));
-      causes.forEach((c) => causeWrap.appendChild(h("div", { class: "explain" }, [
-        h("div", {}, [c.kind === "CONFIRMED" ? badge("Đã xác nhận", "green") : badge("Giả thuyết", "amber"), c.rule_id ? h("span", { style: "font-size:12px;color:var(--c-text-faint);margin-left:8px;", text: "rule " + c.rule_id }) : null]),
-        h("div", { text: c.content, style: "margin-top:6px;" }),
-        c.evidence ? h("div", { class: "cell-sub", text: "Bằng chứng: " + c.evidence }) : null,
-        (c.kind === "CONFIRMED" && c.confirmed_by) ? h("div", { class: "cell-sub", text: "Xác nhận bởi: " + c.confirmed_by }) : null,
-      ])));
+      ]));
+      if (inc.description) summaryCard.appendChild(h("div", { class: "explain", style: "margin-top:12px;" }, [h("h4", { text: "Quan sát (triệu chứng)" }), h("div", { text: inc.description })]));
+      renderActionCard(actCard, inc, id);
+    } catch (e) {
+      if (!pageCurrent()) return;
+      summaryCard.appendChild(errorBox(e.message, () => renderIncidentDetail(id)));
+      return;
     }
-    renderCauses(); causeCard.appendChild(causeWrap);
-    left.appendChild(causeCard);
 
-    // links (evidence)
-    const linkCard = h("div", { class: "card" });
-    linkCard.appendChild(h("div", { class: "card-title" }, [h("span", { text: "Bằng chứng (bản ghi vận hành)" })]));
-    const linkWrap = h("div");
-    if (!links.length) linkWrap.appendChild(h("p", { class: "cell-sub", text: "Chưa liên kết bản ghi vận hành nào." }));
-    else links.forEach((l) => linkWrap.appendChild(h("div", { class: "explain" }, [h("div", { text: l.source_type + " #" + l.source_id })])));
-    linkCard.appendChild(linkWrap);
-    left.appendChild(linkCard);
+    // Các khu vực phụ tải song song; lỗi một phần không che thông tin chính.
+    loadContextSection(left, id, inc);
+    loadCausesSection(left, id);
+    loadLinksSection(left, id);
+    loadRunsSection(actCard, id);
+  }
 
-    // right: actions + run analysis + history
-    const actCard = h("div", { class: "card" });
+  function asyncSection(card, title, fetcher, renderer) {
+    card.appendChild(h("div", { class: "card-title" }, [h("span", { text: title })]));
+    const body = h("div");
+    card.appendChild(body);
+    function run() {
+      body.textContent = ""; body.appendChild(spinner());
+      fetcher()
+        .then((d) => { if (!pageCurrent()) return; body.textContent = ""; renderer(body, d); })
+        .catch((e) => { if (!pageCurrent()) return; body.textContent = ""; body.appendChild(errorBox(e.message, run)); });
+    }
+    run();
+  }
+
+  function renderActionCard(actCard, inc, id) {
     actCard.appendChild(h("div", { class: "card-title" }, [h("span", { text: "Thao tác" })]));
     const statusRow = h("div", { class: "toolbar" });
     const newStatus = selectInput("newstatus", ["OPEN", "INVESTIGATING", "MITIGATING", "RESOLVED"].map(x => ({ value: x, label: { OPEN: "Mở", INVESTIGATING: "Điều tra", MITIGATING: "Xử lý", RESOLVED: "Giải quyết" }[x] })), inc.status);
@@ -902,26 +1016,75 @@
       actCard.appendChild(h("button", { class: "btn btn-primary", style: "width:100%;margin-top:8px;", text: "Đóng hồ sơ", onclick: () => closeIncident(id) }));
     }
     actCard.appendChild(h("button", { class: "btn btn-primary", style: "width:100%;margin-top:8px;", text: "Chạy phân tích tác động", onclick: () => navigate("analysis?incident=" + id) }));
-    if (runs.length) {
-      actCard.appendChild(h("h4", { text: "Đã phân tích " + runs.length + " lần", style: "margin:12px 0 6px;" }));
-      runs.slice(0, 5).forEach((r) => actCard.appendChild(h("button", { class: "btn btn-ghost btn-sm", style: "width:100%;text-align:left;", text: "Xem phân tích #" + r.id + " — " + fmt(r.run_at), onclick: () => navigate("analysis?run=" + r.id) })));
-    }
-    right.appendChild(actCard);
   }
+
+  function loadContextSection(left, id, inc) {
+    const card = h("div", { class: "card" });
+    left.appendChild(card);
+    asyncSection(card, "Bối cảnh sản xuất",
+      () => api("/api/incidents/" + id + "/context").then(d => d.data),
+      (body, ctxData) => renderContextContent(body, id, ctxData));
+  }
+  function loadCausesSection(left, id) {
+    const card = h("div", { class: "card" });
+    left.appendChild(card);
+    asyncSection(card, "Nguyên nhân",
+      () => api("/api/incidents/" + id + "/causes").then(d => d.data),
+      (body, causes) => {
+        if (!causes.length) { body.appendChild(emptyBox("survey", "Chưa có nguyên nhân", "Giả thuyết sẽ xuất hiện sau khi chạy phân tích; nguyên nhân xác nhận do bạn ghi.")); return; }
+        causes.forEach((c) => body.appendChild(h("div", { class: "explain" }, [
+          h("div", {}, [c.kind === "CONFIRMED" ? badge("Đã xác nhận", "green") : badge("Giả thuyết", "amber"), c.rule_id ? h("span", { style: "font-size:12px;color:var(--c-text-faint);margin-left:8px;", text: "rule " + c.rule_id }) : null]),
+          h("div", { text: c.content, style: "margin-top:6px;" }),
+          c.evidence ? h("div", { class: "cell-sub", text: "Bằng chứng: " + c.evidence }) : null,
+          (c.kind === "CONFIRMED" && c.confirmed_by) ? h("div", { class: "cell-sub", text: "Xác nhận bởi: " + c.confirmed_by }) : null,
+        ])));
+      });
+  }
+  function loadLinksSection(left, id) {
+    const card = h("div", { class: "card" });
+    left.appendChild(card);
+    asyncSection(card, "Bằng chứng (bản ghi vận hành)",
+      () => api("/api/incidents/" + id + "/links").then(d => d.data),
+      (body, links) => {
+        if (!links.length) { body.appendChild(h("p", { class: "cell-sub", text: "Chưa liên kết bản ghi vận hành nào." })); return; }
+        links.forEach((l) => body.appendChild(h("div", { class: "explain" }, [h("div", { text: l.source_type + " #" + l.source_id })])));
+      });
+  }
+  function loadRunsSection(actCard, id) {
+    const wrap = h("div", { style: "margin-top:12px;" });
+    actCard.appendChild(wrap);
+    asyncSectionWrap(wrap, "Đã phân tích",
+      () => api("/api/analysis/runs?source_type=INCIDENT&source_id=" + id + "&page_size=10").then(d => d.data.items),
+      (body, runs) => {
+        if (!runs.length) { body.appendChild(h("p", { class: "cell-sub", text: "Chưa có lần phân tích nào." })); return; }
+        runs.forEach((r) => body.appendChild(h("button", { class: "btn btn-ghost btn-sm", style: "width:100%;text-align:left;", text: "Xem phân tích #" + r.id + " — " + fmt(r.run_at), onclick: () => navigate("analysis?run=" + r.id) })));
+      });
+  }
+  function asyncSectionWrap(wrap, title, fetcher, renderer) {
+    wrap.appendChild(h("h4", { text: title, style: "margin:0 0 6px;" }));
+    const body = h("div");
+    wrap.appendChild(body);
+    function run() {
+      body.textContent = ""; body.appendChild(spinner());
+      fetcher()
+        .then((d) => { if (!pageCurrent()) return; body.textContent = ""; renderer(body, d); })
+        .catch((e) => { if (!pageCurrent()) return; body.textContent = ""; body.appendChild(errorBox(e.message, run)); });
+    }
+    run();
+  }
+
   function kv(k, v, node) {
     return h("div", { class: "kv-row" }, [h("span", { class: "k", text: k }), node ? node : h("span", { text: v })]);
   }
 
   const CTX_STATUS = { MATCHED: ["Đã xác định", "green"], AMBIGUOUS: ["Mơ hồ — cần xác minh", "amber"], NOT_FOUND: ["Chưa xác định", "gray"], CONFIRMED: ["Đã xác minh", "green"], NEEDS_REVIEW: ["Cần kiểm tra lại", "red"] };
 
-  function renderContextCard(id, ctxData) {
-    const card = h("div", { class: "card" });
-    card.appendChild(h("div", { class: "card-title" }, [h("span", { text: "Bối cảnh sản xuất" })]));
+  function renderContextContent(body, id, ctxData) {
     const status = ctxData.status || "NOT_FOUND";
-    card.appendChild(h("div", { style: "margin-bottom:8px;" }, [badge(CTX_STATUS[status][0], CTX_STATUS[status][1])]));
+    body.appendChild(h("div", { style: "margin-bottom:8px;" }, [badge(CTX_STATUS[status][0], CTX_STATUS[status][1])]));
     const candidates = ctxData.candidates || [];
     if (!candidates.length) {
-      card.appendChild(h("p", { class: "cell-sub", text: "Chưa xác định được lô/công đoạn tại thời điểm xảy ra sự cố." }));
+      body.appendChild(h("p", { class: "cell-sub", text: "Chưa xác định được lô/công đoạn tại thời điểm xảy ra sự cố." }));
     } else {
       const tbl = h("div");
       renderTable(tbl, [
@@ -929,19 +1092,18 @@
         { key: "started_at", label: "Bắt đầu", render: (r) => fmt(r.started_at) },
         { key: "ended_at", label: "Kết thúc", render: (r) => r.ended_at ? fmt(r.ended_at) : badge("Đang chạy", "green") },
       ], candidates);
-      card.appendChild(tbl);
+      body.appendChild(tbl);
     }
     if (ctxData.verification && ctxData.verification.status === "CONFIRMED") {
       const vr = ctxData.verification;
-      card.appendChild(h("div", { class: "explain", style: "margin-top:8px;" }, [
+      body.appendChild(h("div", { class: "explain", style: "margin-top:8px;" }, [
         h("div", { class: "cell-sub", text: "Đã xác minh bởi #" + vr.decided_by + " lúc " + fmt(vr.decided_at) }),
         vr.reason ? h("div", { class: "cell-sub", text: "Lý do: " + vr.reason }) : null,
       ]));
     }
     if (status === "AMBIGUOUS" && userHasRole("COORDINATOR")) {
-      card.appendChild(renderVerifyForm(id, candidates));
+      body.appendChild(renderVerifyForm(id, candidates));
     }
-    return card;
   }
 
   function renderVerifyForm(id, candidates) {
@@ -976,7 +1138,7 @@
     const fb = formBuilder(fields, async (data, s) => {
       fb.setSubmitting(true);
       try {
-        await api("/api/incidents/" + id + "/recover", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ recovered_at: data.recovered_at ? iso(data.recovered_at) : null }) });
+        await api("/api/incidents/" + id + "/recover", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ recovered_at: data.recovered_at ? iso(data.recovered_at) : null, note: data.note || null }) });
         closeModal(); toast("Đã xác nhận khôi phục."); renderIncidentDetail(id);
       } catch (e) { toast(e.message, "error"); fb.setSubmitting(false); }
     });
@@ -1006,6 +1168,7 @@
     const card = h("div", { class: "card" });
     v.appendChild(card);
     const meta = await api("/api/graph/meta");
+    if (!pageCurrent()) return;
     const toolbar = h("div", { class: "graph-toolbar" });
     const modeSel = selectInput("mode", [{ value: "business", label: "Nghiệp vụ sản xuất" }, { value: "system", label: "Logic hệ thống" }, { value: "combined", label: "Kết hợp hai lớp" }]);
     const search = h("input", { placeholder: "Tìm node theo mã/tên..." });
@@ -1145,9 +1308,9 @@
     const v = $("#view");
     v.textContent = "";
     v.appendChild(h("div", { class: "section-head" }, [h("div", {}, [h("h2", { text: "Phân tích tác động" }), h("div", { class: "desc", text: "Chạy phân tích và đọc kết quả kèm giải thích." })])]));
-    const inputCard = h("div", { class: "card" });
-    const resultCard = h("div", { class: "card" });
-    const histCard = h("div", { class: "card" });
+    const inputCard = h("div", { class: "card", id: "analysis-input" });
+    const resultCard = h("div", { class: "card", id: "analysis-result" });
+    const histCard = h("div", { class: "card", id: "analysis-history" });
     v.appendChild(inputCard); v.appendChild(resultCard); v.appendChild(histCard);
 
     inputCard.appendChild(h("div", { class: "card-title" }, [h("span", { text: "Đầu vào" })]));
@@ -1161,31 +1324,45 @@
     form.appendChild(field("Tốc độ (pcs/phút, tùy chọn)", rate));
     form.appendChild(field("Số bước lan truyền", maxd));
     inputCard.appendChild(form);
-    inputCard.appendChild(h("button", { class: "btn btn-primary", text: "Chạy phân tích", onclick: () => runAnalysis() }));
+    const runBtn = h("button", { class: "btn btn-primary", text: "Chạy phân tích", onclick: () => runAnalysis(runBtn) });
+    inputCard.appendChild(runBtn);
+    inputCard.appendChild(h("div", { class: "cell-sub", text: "Chọn sự cố rồi bấm \"Chạy phân tích\". Mở trang này không tự tạo kết quả mới." }));
 
-    const incidents = await api("/api/incidents?page_size=100");
+    let incOptions = [];
+    try {
+      const incidents = await api("/api/incidents?page_size=100");
+      incOptions = incidents.data.items;
+    } catch (e) {
+      if (pageCurrent()) toast(e.message, "error");
+    }
     incSel.appendChild(h("option", { value: "", text: "-- Chọn sự cố --" }));
-    incidents.data.items.forEach(i => incSel.appendChild(h("option", { value: i.id, text: i.code + " — " + i.title })));
+    incOptions.forEach(i => incSel.appendChild(h("option", { value: i.id, text: i.code + " — " + i.title })));
 
     const qInc = params.params.get("incident"), qRun = params.params.get("run");
     if (qRun) viewRun(Number(qRun));
-    else if (qInc) { incSel.value = qInc; runAnalysis(); }
+    else if (qInc) incSel.value = qInc;
     loadHistory();
   }
-  function runAnalysis() {
+  function runAnalysis(btn) {
     const incSel = $("#view select[name='incident']");
     const id = incSel.value;
     if (!id) { toast("Chọn một sự cố trước.", "error"); return; }
     const dur = $("#view input[name='duration']").value;
     const rate = $("#view input[name='rate']").value;
     const maxd = $("#view input[name='max_depth']").value || "3";
+    const b = btn || $("#analysis-input button.btn-primary");
+    const prev = b.textContent;
+    b.disabled = true; b.textContent = "Đang chạy...";
     api("/api/analysis/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ incident_id: Number(id), max_depth: Number(maxd), duration_minutes: dur ? Number(dur) : null, rate_per_minute: rate ? Number(rate) : null }) })
-      .then(d => renderAnalysisResult(d.data)).catch(e => toast(e.message, "error"));
+      .then(d => { if (pageCurrent()) renderAnalysisResult(d.data); })
+      .catch(e => { if (pageCurrent()) toast(e.message, "error"); })
+      .finally(() => { b.disabled = false; b.textContent = prev; });
   }
   function renderAnalysisResult(r) {
-    const box = $("#view .card:nth-child(2)");
+    const box = $("#analysis-result");
     box.textContent = "";
     box.appendChild(h("div", { class: "card-title" }, [h("span", { text: "Kết quả phân tích" }), h("span", { class: "sub", text: "Quy tắc " + (r.rules || []).join(", ") + " — phiên bản " + r.rule_version + (r.run_id ? " · lần chạy #" + r.run_id : "") })]));
+    if (r.snapshot_available === false) box.appendChild(h("div", { class: "message visible warn", text: "Lần chạy cũ chưa lưu snapshot đầy đủ; bối cảnh/ước tính có thể không tái hiện được." }));
     if (r.quantification && r.quantification.available) box.appendChild(h("div", { class: "message visible info", text: "Định lượng: " + r.quantification.formula + " = " + r.quantification.lost_quantity + " pcs" }));
     else if (r.quantification) box.appendChild(h("div", { class: "message visible warn", text: r.quantification.message }));
 
@@ -1285,22 +1462,30 @@
     } catch (e) { toast(e.message, "error"); }
   }
   async function loadHistory() {
-    const wrap = $("#view .card:nth-child(3)");
+    const wrap = $("#analysis-history");
     if (!wrap) return;
     wrap.textContent = ""; wrap.appendChild(h("div", { class: "card-title" }, [h("span", { text: "Lịch sử phân tích" })]));
-    const d = await api("/api/analysis/runs?page_size=10");
-    const list = h("div");
-    if (!d.data.items.length) list.appendChild(h("p", { class: "cell-sub", text: "Chưa có lần phân tích nào." }));
-    else d.data.items.forEach(r => list.appendChild(h("div", { class: "explain", style: "display:flex;justify-content:space-between;align-items:center;" }, [
-      h("span", { text: "#" + r.id + " — " + r.source_type + " " + r.source_id + " · " + fmt(r.run_at) }),
-      h("button", { class: "btn btn-ghost btn-sm", text: "Xem", onclick: () => viewRun(r.id) }),
-    ])));
-    wrap.appendChild(list);
+    try {
+      const d = await api("/api/analysis/runs?page_size=10");
+      if (!pageCurrent()) return;
+      const list = h("div");
+      if (!d.data.items.length) list.appendChild(h("p", { class: "cell-sub", text: "Chưa có lần phân tích nào." }));
+      else d.data.items.forEach(r => list.appendChild(h("div", { class: "explain", style: "display:flex;justify-content:space-between;align-items:center;" }, [
+        h("span", { text: "#" + r.id + " — " + r.source_type + " " + r.source_id + " · " + fmt(r.run_at) }),
+        h("button", { class: "btn btn-ghost btn-sm", text: "Xem", onclick: () => viewRun(r.id) }),
+      ])));
+      wrap.appendChild(list);
+    } catch (e) {
+      if (!pageCurrent()) return;
+      wrap.appendChild(h("p", { class: "cell-sub", text: "Không tải được lịch sử phân tích." }));
+    }
   }
   async function viewRun(id) {
-    const d = await api("/api/analysis/runs/" + id);
-    const r = { rules: [], rule_version: d.data.run.rule_version, quantification: { available: false }, impacts: d.data.impacts.map(i => ({ node_name: i.node_name, node_type: i.node_type, impact_type: i.impact_type, path: i.path, evidence: i.evidence, rule_id: i.rule_id, missing_info: i.missing_info })), hypotheses: d.data.hypotheses.map(hh => ({ content: hh.content, rule_id: hh.rule_id, priority: hh.priority, check_more: hh.check_more, evidence: hh.evidence })), actions: d.data.actions.map(a => ({ department_name: a.department_name, action: a.action, priority: a.priority })) };
-    renderAnalysisResult(r);
+    try {
+      const d = await api("/api/analysis/runs/" + id);
+      if (!pageCurrent()) return;
+      renderAnalysisResult(d.data);
+    } catch (e) { if (pageCurrent()) toast(e.message, "error"); }
   }
 
   /* ============================================================ tasks */
@@ -1320,29 +1505,46 @@
     card.appendChild(toolbar); card.appendChild(listWrap); card.appendChild(pag);
     loadOptions("department").then(opts => { opts.forEach(o => deptSel.appendChild(h("option", { value: o.value, text: o.label }))); });
     const st = { page: 1, tp: 1 };
+    let loadSeq = 0;
     async function load() {
+      const mySeq = ++loadSeq;
       listWrap.textContent = ""; listWrap.appendChild(spinner());
       try {
         const q = new URLSearchParams({ page: st.page, page_size: 20 });
         if (deptSel.value) q.set("department_id", deptSel.value);
         if (statusSel.value) q.set("status", statusSel.value);
         const d = await api("/api/tasks?" + q);
+        if (!pageCurrent() || mySeq !== loadSeq) return;
         listWrap.textContent = "";
-        if (!d.data.items.length) { listWrap.appendChild(emptyBox("tasks", "Không có công việc", "Công việc được tạo từ đề xuất phân tích hoặc thêm thủ công.")); return; }
+        pag.textContent = "";
+        if (!d.data.items.length) {
+          if (deptSel.value || statusSel.value) listWrap.appendChild(emptyBox("search", "Không có công việc phù hợp", "Thử thay đổi bộ lọc.",
+            h("button", { class: "btn btn-secondary btn-sm", text: "Xóa bộ lọc", onclick: () => { deptSel.value = ""; statusSel.value = ""; st.page = 1; load(); } })));
+          else listWrap.appendChild(emptyBox("tasks", "Không có công việc", "Công việc được tạo từ đề xuất phân tích hoặc thêm thủ công."));
+          return;
+        }
         renderTable(listWrap, [
           { key: "title", label: "Công việc" }, { key: "department_id", label: "Bộ phận" },
           { key: "priority", label: "Ưu tiên" }, { key: "status", label: "Trạng thái", render: (r) => statusBadge(r.status) },
           { key: "source_incident_id", label: "Sự cố", render: (r) => r.source_incident_id ? ("#" + r.source_incident_id) : "—" },
-        ], d.data.items, (row) => h("td", {}, [h("select", { onchange: (e) => setStatus(row.id, e.target.value) }, [
+        ], d.data.items, (row) => h("td", {}, [h("select", { onchange: (e) => setStatus(row, e.target) }, [
           h("option", { value: "TODO", selected: row.status === "TODO", text: "Cần làm" }),
           h("option", { value: "IN_PROGRESS", selected: row.status === "IN_PROGRESS", text: "Đang làm" }),
           h("option", { value: "DONE", selected: row.status === "DONE", text: "Hoàn thành" }),
           h("option", { value: "DISMISSED", selected: row.status === "DISMISSED", text: "Bỏ qua" }),
         ])]));
         st.tp = d.data.pagination.total_pages; pagination(pag, st.page, st.tp, (p) => { st.page = p; load(); });
-      } catch (e) { listWrap.textContent = ""; listWrap.appendChild(errorBox(e.message, load)); }
+      } catch (e) { if (!pageCurrent() || mySeq !== loadSeq) return; listWrap.textContent = ""; listWrap.appendChild(errorBox(e.message, load)); }
     }
-    async function setStatus(id, status) { try { await api("/api/tasks/" + id + "/status", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status }) }); toast("Đã cập nhật."); load(); } catch (e) { toast(e.message, "error"); } }
+    async function setStatus(row, sel) {
+      try {
+        await api("/api/tasks/" + row.id + "/status", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: sel.value }) });
+        toast("Đã cập nhật."); load();
+      } catch (e) {
+        sel.value = row.status;
+        toast(e.message, "error");
+      }
+    }
     async function taskForm(row) {
       const depts = await loadOptions("department");
       const fields = [
@@ -1378,6 +1580,7 @@
     card.appendChild(toolbar);
     const list = h("div", { class: "grid grid-3" });
     const info = await api("/api/scenarios");
+    if (!pageCurrent()) return;
     info.data.forEach(s => list.appendChild(h("div", { class: "card" }, [
       h("div", { class: "card-title" }, [h("span", { text: s.title.replace(/^Kịch bản \d: /, "") }), badge("Mô phỏng", "amber")]),
       h("p", { class: "cell-sub", text: "Sự cố: " + s.incident_code }),
@@ -1387,6 +1590,7 @@
     ])));
     card.appendChild(list);
     const status = await api("/api/scenarios/status");
+    if (!pageCurrent()) return;
     st.textContent = status.data.loaded ? "Đã nạp." : "Chưa nạp.";
   }
   async function loadDemo() {
@@ -1406,7 +1610,9 @@
     v.textContent = "";
     v.appendChild(h("div", { class: "section-head" }, [h("div", {}, [h("h2", { text: "Khảo sát & xác nhận" }), h("div", { class: "desc", text: "Theo dõi các thông tin cần xác nhận với nhà máy." })])]));
     const groups = await api("/api/survey/groups");
+    if (!pageCurrent()) return;
     const items = await api("/api/survey");
+    if (!pageCurrent()) return;
     const byGroup = {};
     items.data.forEach(i => { (byGroup[i.group_code] = byGroup[i.group_code] || []).push(i); });
     groups.data.forEach(g => {
@@ -1454,6 +1660,7 @@
       listWrap.textContent = ""; listWrap.appendChild(spinner());
       try {
         const d = await api("/api/auth/users");
+        if (!pageCurrent()) return;
         listWrap.textContent = "";
         if (!d.data.length) { listWrap.appendChild(emptyBox("users", "Chưa có tài khoản", "Tạo tài khoản đầu tiên bằng script hoặc nút bên dưới.")); return; }
         renderTable(listWrap, [
@@ -1490,13 +1697,15 @@
   }
 
   /* ============================================================ dashboard */
+  const pageState = {};
   let dataMode = localStorage.getItem("d3.mode") || "operations";
   async function renderDashboard() {
     const v = $("#view");
     v.textContent = "";
     v.appendChild(spinner());
     let d;
-    try { d = await api("/api/dashboard?simulated=" + (dataMode === "simulation")); } catch (e) { v.textContent = ""; v.appendChild(errorBox(e.message, renderDashboard)); return; }
+    try { d = await api("/api/dashboard?simulated=" + (dataMode === "simulation")); } catch (e) { if (!pageCurrent()) return; v.textContent = ""; v.appendChild(errorBox(e.message, renderDashboard)); return; }
+    if (!pageCurrent()) return;
     v.textContent = "";
     const s = d.data;
 
@@ -1644,7 +1853,7 @@
       $("#user-name").textContent = currentUser.display_name + " · " + (currentUser.roles || []).join(", ");
       hideLogin();
       buildSidebar();
-      navigate("dashboard");
+      renderRoute();
     } catch (err) {
       const el = $("#login-error"); el.textContent = err.message; el.classList.remove("hidden");
     }
@@ -1700,33 +1909,75 @@
     return { parts, params };
   }
 
+  function currentHash() { return location.hash.replace(/^#\/?/, ""); }
+
   function navigate(path) {
+    if (currentHash() === path) return;
     location.hash = "#/" + path;
   }
+
+  function renderNotFound() {
+    const v = $("#view");
+    v.textContent = "";
+    v.appendChild(emptyBox("empty", "Không tìm thấy trang",
+      "URL không hợp lệ. Chọn một mục từ menu bên trái.",
+      h("button", { class: "btn btn-primary btn-sm", text: "Về trung tâm vận hành", onclick: () => navigate("dashboard") })));
+  }
+
+  function renderForbidden() {
+    const v = $("#view");
+    v.textContent = "";
+    v.appendChild(emptyBox("alert", "Không có quyền truy cập",
+      "Tài khoản hiện tại không được phép mở trang này.", null));
+  }
+
   function renderRoute() {
     if (!currentUser) { showLogin(); return; }
     const { parts, params } = parseHash();
     const route = parts[0] || "dashboard";
     const cfg = ROUTES[route];
-    $("#page-title").textContent = cfg ? cfg.title : "Trung tâm vận hành";
+    $("#page-title").textContent = cfg ? cfg.title : "Không tìm thấy trang";
     $$(".nav-item").forEach(a => a.classList.toggle("active", a.dataset.route === route));
     $("#sidebar").classList.remove("open");
     removeBackdrop();
-    const render = cfg ? cfg.render : renderDashboard;
-    render({ parts, params });
+    activeRenderToken = ++renderToken;
+    const v = $("#view");
+    v.textContent = ""; v.appendChild(spinner());
+    if (!cfg) { renderNotFound(); return; }
+    if (cfg.adminOnly && !userHasRole("ADMIN")) { renderForbidden(); return; }
+    try {
+      const result = cfg.render({ parts, params });
+      if (result && typeof result.then === "function") {
+        result.catch((err) => {
+          if (!pageCurrent()) return;
+          if (err && err.status === 401) return;
+          v.textContent = "";
+          v.appendChild(errorBox((err && err.message) || "Không tải được trang.", () => renderRoute()));
+        });
+      }
+    } catch (err) {
+      if (!pageCurrent()) return;
+      v.textContent = "";
+      v.appendChild(errorBox((err && err.message) || "Lỗi khi hiển thị trang.", () => renderRoute()));
+    }
   }
 
   /* header controls */
   $("#nav-toggle").addEventListener("click", () => { $("#sidebar").classList.toggle("open"); toggleBackdrop(); });
   $("#collapse-toggle").addEventListener("click", () => { document.body.classList.toggle("sidebar-collapsed"); });
   $("#header-record").addEventListener("click", () => navigate("operations"));
-  $("#header-incident").addEventListener("click", () => navigate("incidents"));
+  $("#header-incident").addEventListener("click", () => navigate("incidents?new=1"));
   function setMode(mode) {
     dataMode = mode; localStorage.setItem("d3.mode", mode);
     $$(".mode-btn").forEach(b => b.classList.toggle("active", b.dataset.mode === mode));
-    if (parseHash().parts[0] === "dashboard") renderDashboard();
+    const modeLabel = mode === "simulation" ? "Mô phỏng" : "Vận hành";
+    $("#mode-label").textContent = modeLabel;
+    // Áp dụng lại toàn bộ trang hiện tại (đồng bộ scope/dữ liệu/bộ đếm).
+    renderRoute();
   }
   $$(".mode-btn").forEach(b => b.addEventListener("click", () => setMode(b.dataset.mode)));
+  const modeLabelBtn = $("#mode-label");
+  if (modeLabelBtn) modeLabelBtn.addEventListener("click", () => setMode(dataMode === "simulation" ? "operations" : "simulation"));
   setMode(dataMode);
 
   function toggleBackdrop() {
