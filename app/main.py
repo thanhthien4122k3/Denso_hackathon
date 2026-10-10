@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from app.auth import auth_middleware
 from app.engine.rules import load_rules
 from app.exceptions import (
+    ConflictError,
     DatabaseUnavailableError,
     DuplicateCodeError,
     NotFoundError,
@@ -107,6 +108,11 @@ async def database_unavailable_handler(request: Request, exc: DatabaseUnavailabl
 
 @app.exception_handler(RecordConflictError)
 async def record_conflict_handler(request: Request, exc: RecordConflictError):
+    return JSONResponse(status_code=409, content={"success": False, "message": str(exc), "data": None})
+
+
+@app.exception_handler(ConflictError)
+async def conflict_handler(request: Request, exc: ConflictError):
     return JSONResponse(status_code=409, content={"success": False, "message": str(exc), "data": None})
 
 

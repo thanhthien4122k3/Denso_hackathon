@@ -50,11 +50,15 @@
     clearTimeout(t._timer); t._timer = setTimeout(() => { t.className = "toast"; }, 4200);
   }
 
-  /* Vòng đời trang: mỗi lần render có token riêng; request/continuation chỉ
-     cập nhật DOM nếu token vẫn là token hiện tại. */
-  let renderToken = 0;
-  let activeRenderToken = 0;
-  function pageCurrent() { return activeRenderToken === renderToken; }
+  /* Vòng đời trang: mỗi lần render tạo một context có version bất biến.
+     Continuation chỉ được cập nhật DOM khi version của nó vẫn là version hiện
+     tại. Hàm render phải capture context ở đầu và dùng ctx.isCurrent(). */
+  let pageVersion = 0;
+  let activePageCtx = null;
+  function createPageContext() {
+    const version = ++pageVersion;
+    return { isCurrent: () => version === pageVersion };
+  }
 
   let modalDirty = false;
   let modalOpener = null;
@@ -352,7 +356,7 @@
     return CATALOG_KEYS;
   }
   async function loadOptions(key) {
-    const d = await api("/api/catalog/" + key + "?page_size=200");
+    const d = await api("/api/catalog/" + key + "?page_size=100");
     return d.data.items.map((r) => ({ value: r.id, label: r.name, code: r.code }));
   }
   const CATALOG_EXTRA = {
@@ -367,11 +371,12 @@
   };
 
   async function renderCatalog() {
+    const ctx = activePageCtx;
     const v = $("#view");
     v.textContent = "";
     v.appendChild(h("div", { class: "section-head" }, [h("div", {}, [h("h2", { text: "Danh mục sản xuất" }), h("div", { class: "desc", text: "Bộ phận, chuyền, công đoạn, máy, vật tư, sản phẩm, lệnh và lot." })])]));
     const keys = await loadCatalogKeys();
-    if (!pageCurrent()) return;
+    if (!ctx.isCurrent()) return;
     const tabs = h("div", { class: "tabs" });
     const card = h("div", { class: "card" });
     v.appendChild(h("div", { class: "card" }, [tabs, card]));
@@ -523,7 +528,7 @@
       } catch (e) { listWrap.textContent = ""; listWrap.appendChild(errorBox(e.message, load)); }
     }
     async function datasetForm(row) {
-      const srcs = (await api("/api/system/sources?page_size=200")).data.items.map(r => ({ value: r.id, label: r.code, code: r.code }));
+      const srcs = (await api("/api/system/sources?page_size=100")).data.items.map(r => ({ value: r.id, label: r.code, code: r.code }));
       const depts = await loadOptions("department");
       const fields = [
         { name: "code", label: "Mã", required: true }, { name: "name", label: "Tên", required: true },
@@ -548,9 +553,10 @@
     load();
   }
   async function viewFields(body, token, isActive) {
+    const ctx = activePageCtx;
     const toolbar = h("div", { class: "toolbar" }); const listWrap = h("div");
-    const datasets = (await api("/api/system/datasets?page_size=200")).data.items;
-    if (!pageCurrent() || (isActive && !isActive())) return;
+    const datasets = (await api("/api/system/datasets?page_size=100")).data.items;
+    if (!ctx.isCurrent() || (isActive && !isActive())) return;
     const sel = selectInput("ds", datasets.map(r => ({ value: r.id, label: r.code })), datasets[0] && datasets[0].id);
     toolbar.appendChild(field("Dataset", sel));
     toolbar.appendChild(h("button", { class: "btn btn-primary", text: "Thêm trường", onclick: () => fieldForm(sel.value) }));
@@ -594,7 +600,7 @@
       ], d.data.items, (row) => h("td", {}, [h("button", { class: "btn btn-sm btn-ghost", text: "Xóa", onclick: () => { if (confirm("Xóa?")) api("/api/system/flows/" + row.id, { method: "DELETE" }).then(() => { toast("Đã xóa."); load(); }).catch(e => toast(e.message, "error")); } })]));
     }
     async function flowForm(row) {
-      const datasets = (await api("/api/system/datasets?page_size=200")).data.items;
+      const datasets = (await api("/api/system/datasets?page_size=100")).data.items;
       const opts = datasets.map(r => ({ value: r.id, label: r.code, code: r.code }));
       const fields = [
         { name: "code", label: "Mã", required: true }, { name: "name", label: "Tên", required: true },
@@ -682,18 +688,28 @@
   }
 
   function viewProduction(body) {
-    body.appendChild(productionForm());
+    const ctx = activePageCtx;
+    function loadRecent() {
+      listWrap.textContent = ""; listWrap.appendChild(spinner());
+      api("/api/production-records?page_size=10").then(d => {
+        if (!ctx.isCurrent()) return;
+        listWrap.textContent = "";
+        renderTable(listWrap, [
+          { key: "id", label: "ID" }, { key: "production_date", label: "Ngày" }, { key: "shift", label: "Ca" },
+          { key: "line_code", label: "Chuyền" }, { key: "process_code", label: "Công đoạn" }, { key: "lot_code", label: "Lot" },
+          { key: "good_quantity", label: "Đạt" }, { key: "defect_quantity", label: "Lỗi" },
+        ], d.data.items);
+      }).catch((e) => {
+        if (!ctx.isCurrent()) return;
+        listWrap.textContent = "";
+        listWrap.appendChild(errorBox(e.message, loadRecent));
+      });
+    }
+    body.appendChild(productionForm(loadRecent));
     const head = h("div", { class: "card-title", style: "margin-top:16px;" }, [h("span", { text: "Bản ghi gần nhất" })]);
     const listWrap = h("div");
     body.appendChild(h("div", { class: "card" }, [head, listWrap]));
-    api("/api/production-records?page_size=10").then(d => {
-      if (!pageCurrent()) return;
-      renderTable(listWrap, [
-        { key: "id", label: "ID" }, { key: "production_date", label: "Ngày" }, { key: "shift", label: "Ca" },
-        { key: "line_code", label: "Chuyền" }, { key: "process_code", label: "Công đoạn" }, { key: "lot_code", label: "Lot" },
-        { key: "good_quantity", label: "Đạt" }, { key: "defect_quantity", label: "Lỗi" },
-      ], d.data.items);
-    }).catch((e) => { if (pageCurrent()) listWrap.appendChild(errorBox(e.message, viewProduction)); });
+    loadRecent();
   }
 
   async function viewStates(body) {
@@ -842,7 +858,9 @@
   }
 
   /* ============================================================ incidents */
+  let incidentFormOpener = null;
   async function renderIncidents(params) {
+    const ctx = activePageCtx;
     const v = $("#view");
     v.textContent = "";
     if (params.parts[1]) { renderIncidentDetail(params.parts[1]); return; }
@@ -881,7 +899,7 @@
         if (typeSel.value) q.set("incident_type", typeSel.value);
         if (search.value) q.set("search", search.value);
         const d = await api("/api/incidents?" + q);
-        if (!pageCurrent() || mySeq !== loadSeq) return;
+        if (!ctx.isCurrent() || mySeq !== loadSeq) return;
         listWrap.textContent = "";
         pag.textContent = "";
         if (!d.data.items.length) {
@@ -905,12 +923,20 @@
         pagination(pag, st.page, st.tp, (p) => { st.page = p; load(); });
         persist();
       } catch (e) {
-        if (!pageCurrent() || mySeq !== loadSeq) return;
+        if (!ctx.isCurrent() || mySeq !== loadSeq) return;
         listWrap.textContent = ""; listWrap.appendChild(errorBox(e.message, load));
       }
     }
     async function incidentForm(row) {
-      const depts = await loadOptions("department");
+      let depts = [];
+      try {
+        depts = await loadOptions("department");
+      } catch (e) {
+        toast("Không tải được danh sách bộ phận: " + (e && e.message ? e.message : "lỗi mạng"), "error");
+        return;
+      }
+      // Idempotency key ổn định cho một lần nhập; giữ nguyên khi retry.
+      const formRequestId = uuid();
       const fields = [
         { group: "Thông tin chung" },
         { name: "code", label: "Mã sự cố", required: true }, { name: "title", label: "Tiêu đề", required: true },
@@ -927,18 +953,23 @@
       const fb = formBuilder(fields, async (data, s) => {
         fb.setSubmitting(true);
         try {
-          const payload = { ...data, request_id: uuid(), start_time: data.start_time ? iso(data.start_time) : null, end_time: data.end_time ? iso(data.end_time) : null };
-          await api("/api/incidents", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-          closeModal(); toast("Đã tạo sự cố."); load();
+          const payload = { ...data, request_id: formRequestId, start_time: data.start_time ? iso(data.start_time) : null, end_time: data.end_time ? iso(data.end_time) : null };
+          const resp = await api("/api/incidents", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+          closeModal(); toast(resp.message || "Đã tạo sự cố."); load();
         } catch (e) { toast(e.message, "error"); fb.setSubmitting(false); }
       });
       openModal("Tạo sự cố", fb.form);
     }
+    incidentFormOpener = () => incidentForm(null);
     load();
-    if (params.params.get("new") === "1") incidentForm(null);
+    if (params.params.get("new") === "1") {
+      incidentForm(null);
+      history.replaceState(null, "", "#/incidents");
+    }
   }
 
   async function renderIncidentDetail(id) {
+    const ctx = activePageCtx;
     const v = $("#view");
     v.textContent = "";
 
@@ -964,7 +995,7 @@
     let inc;
     try {
       inc = (await api("/api/incidents/" + id)).data;
-      if (!pageCurrent()) return;
+      if (!ctx.isCurrent()) return;
       summaryCard.appendChild(h("div", { class: "card-title" }, [h("span", { text: inc.code + " — " + inc.title }), simBadge(inc)]));
       summaryCard.appendChild(h("div", { class: "kv-list" }, [
         kv("Loại", typeLabel(inc.incident_type)), kv("Mức độ", null, severityBadge(inc.severity)),
@@ -976,7 +1007,7 @@
       if (inc.description) summaryCard.appendChild(h("div", { class: "explain", style: "margin-top:12px;" }, [h("h4", { text: "Quan sát (triệu chứng)" }), h("div", { text: inc.description })]));
       renderActionCard(actCard, inc, id);
     } catch (e) {
-      if (!pageCurrent()) return;
+      if (!ctx.isCurrent()) return;
       summaryCard.appendChild(errorBox(e.message, () => renderIncidentDetail(id)));
       return;
     }
@@ -989,14 +1020,15 @@
   }
 
   function asyncSection(card, title, fetcher, renderer) {
+    const ctx = activePageCtx;
     card.appendChild(h("div", { class: "card-title" }, [h("span", { text: title })]));
     const body = h("div");
     card.appendChild(body);
     function run() {
       body.textContent = ""; body.appendChild(spinner());
       fetcher()
-        .then((d) => { if (!pageCurrent()) return; body.textContent = ""; renderer(body, d); })
-        .catch((e) => { if (!pageCurrent()) return; body.textContent = ""; body.appendChild(errorBox(e.message, run)); });
+        .then((d) => { if (!ctx.isCurrent()) return; body.textContent = ""; renderer(body, d); })
+        .catch((e) => { if (!ctx.isCurrent()) return; body.textContent = ""; body.appendChild(errorBox(e.message, run)); });
     }
     run();
   }
@@ -1004,7 +1036,7 @@
   function renderActionCard(actCard, inc, id) {
     actCard.appendChild(h("div", { class: "card-title" }, [h("span", { text: "Thao tác" })]));
     const statusRow = h("div", { class: "toolbar" });
-    const newStatus = selectInput("newstatus", ["OPEN", "INVESTIGATING", "MITIGATING", "RESOLVED"].map(x => ({ value: x, label: { OPEN: "Mở", INVESTIGATING: "Điều tra", MITIGATING: "Xử lý", RESOLVED: "Giải quyết" }[x] })), inc.status);
+    const newStatus = selectInput("newstatus", ["OPEN", "INVESTIGATING", "MITIGATING"].map(x => ({ value: x, label: { OPEN: "Mở", INVESTIGATING: "Điều tra", MITIGATING: "Xử lý" }[x] })), inc.status);
     statusRow.appendChild(field("Chuyển trạng thái", newStatus));
     statusRow.appendChild(h("button", { class: "btn btn-secondary", text: "Cập nhật", onclick: async () => {
       try { await api("/api/incidents/" + id, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: newStatus.value }) }); toast("Đã cập nhật trạng thái."); renderIncidentDetail(id); }
@@ -1061,14 +1093,15 @@
       });
   }
   function asyncSectionWrap(wrap, title, fetcher, renderer) {
+    const ctx = activePageCtx;
     wrap.appendChild(h("h4", { text: title, style: "margin:0 0 6px;" }));
     const body = h("div");
     wrap.appendChild(body);
     function run() {
       body.textContent = ""; body.appendChild(spinner());
       fetcher()
-        .then((d) => { if (!pageCurrent()) return; body.textContent = ""; renderer(body, d); })
-        .catch((e) => { if (!pageCurrent()) return; body.textContent = ""; body.appendChild(errorBox(e.message, run)); });
+        .then((d) => { if (!ctx.isCurrent()) return; body.textContent = ""; renderer(body, d); })
+        .catch((e) => { if (!ctx.isCurrent()) return; body.textContent = ""; body.appendChild(errorBox(e.message, run)); });
     }
     run();
   }
@@ -1162,13 +1195,14 @@
 
   /* ============================================================ map */
   async function renderMap() {
+    const ctx = activePageCtx;
     const v = $("#view");
     v.textContent = "";
     v.appendChild(h("div", { class: "section-head" }, [h("div", {}, [h("h2", { text: "Bản đồ liên kết" }), h("div", { class: "desc", text: "Xem quan hệ giữa máy, công đoạn, vật tư, sản phẩm và dữ liệu." })])]));
     const card = h("div", { class: "card" });
     v.appendChild(card);
     const meta = await api("/api/graph/meta");
-    if (!pageCurrent()) return;
+    if (!ctx.isCurrent()) return;
     const toolbar = h("div", { class: "graph-toolbar" });
     const modeSel = selectInput("mode", [{ value: "business", label: "Nghiệp vụ sản xuất" }, { value: "system", label: "Logic hệ thống" }, { value: "combined", label: "Kết hợp hai lớp" }]);
     const search = h("input", { placeholder: "Tìm node theo mã/tên..." });
@@ -1305,6 +1339,7 @@
 
   /* ============================================================ analysis */
   async function renderAnalysis(params) {
+    const ctx = activePageCtx;
     const v = $("#view");
     v.textContent = "";
     v.appendChild(h("div", { class: "section-head" }, [h("div", {}, [h("h2", { text: "Phân tích tác động" }), h("div", { class: "desc", text: "Chạy phân tích và đọc kết quả kèm giải thích." })])]));
@@ -1333,7 +1368,7 @@
       const incidents = await api("/api/incidents?page_size=100");
       incOptions = incidents.data.items;
     } catch (e) {
-      if (pageCurrent()) toast(e.message, "error");
+      if (ctx.isCurrent()) toast(e.message, "error");
     }
     incSel.appendChild(h("option", { value: "", text: "-- Chọn sự cố --" }));
     incOptions.forEach(i => incSel.appendChild(h("option", { value: i.id, text: i.code + " — " + i.title })));
@@ -1344,6 +1379,7 @@
     loadHistory();
   }
   function runAnalysis(btn) {
+    const ctx = activePageCtx;
     const incSel = $("#view select[name='incident']");
     const id = incSel.value;
     if (!id) { toast("Chọn một sự cố trước.", "error"); return; }
@@ -1354,8 +1390,12 @@
     const prev = b.textContent;
     b.disabled = true; b.textContent = "Đang chạy...";
     api("/api/analysis/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ incident_id: Number(id), max_depth: Number(maxd), duration_minutes: dur ? Number(dur) : null, rate_per_minute: rate ? Number(rate) : null }) })
-      .then(d => { if (pageCurrent()) renderAnalysisResult(d.data); })
-      .catch(e => { if (pageCurrent()) toast(e.message, "error"); })
+      .then(d => {
+        if (!ctx.isCurrent()) return;
+        renderAnalysisResult(d.data);
+        loadHistory();
+      })
+      .catch(e => { if (ctx.isCurrent()) toast(e.message, "error"); })
       .finally(() => { b.disabled = false; b.textContent = prev; });
   }
   function renderAnalysisResult(r) {
@@ -1458,16 +1498,21 @@
     try {
       const payload = { analysis_action_id: a.id, title: a.action, department_id: a.department_id || null, source_analysis_run_id: r.run_id || null, source_incident_id: r.incident_id || null, is_simulated: dataMode === "simulation" };
       const d = await api("/api/tasks/from-action", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-      toast(d.message);
+      const taskId = d.data && d.data.id;
+      toast(d.message + (taskId ? " (#" + taskId + ")" : ""));
+      if (taskId) {
+        if (window.confirm("Đã tạo công việc #" + taskId + ". Mở danh sách công việc?")) navigate("tasks");
+      }
     } catch (e) { toast(e.message, "error"); }
   }
   async function loadHistory() {
+    const ctx = activePageCtx;
     const wrap = $("#analysis-history");
     if (!wrap) return;
     wrap.textContent = ""; wrap.appendChild(h("div", { class: "card-title" }, [h("span", { text: "Lịch sử phân tích" })]));
     try {
       const d = await api("/api/analysis/runs?page_size=10");
-      if (!pageCurrent()) return;
+      if (!ctx.isCurrent()) return;
       const list = h("div");
       if (!d.data.items.length) list.appendChild(h("p", { class: "cell-sub", text: "Chưa có lần phân tích nào." }));
       else d.data.items.forEach(r => list.appendChild(h("div", { class: "explain", style: "display:flex;justify-content:space-between;align-items:center;" }, [
@@ -1476,20 +1521,22 @@
       ])));
       wrap.appendChild(list);
     } catch (e) {
-      if (!pageCurrent()) return;
+      if (!ctx.isCurrent()) return;
       wrap.appendChild(h("p", { class: "cell-sub", text: "Không tải được lịch sử phân tích." }));
     }
   }
   async function viewRun(id) {
+    const ctx = activePageCtx;
     try {
       const d = await api("/api/analysis/runs/" + id);
-      if (!pageCurrent()) return;
+      if (!ctx.isCurrent()) return;
       renderAnalysisResult(d.data);
-    } catch (e) { if (pageCurrent()) toast(e.message, "error"); }
+    } catch (e) { if (ctx.isCurrent()) toast(e.message, "error"); }
   }
 
   /* ============================================================ tasks */
   async function renderTasks() {
+    const ctx = activePageCtx;
     const v = $("#view");
     v.textContent = "";
     v.appendChild(h("div", { class: "section-head" }, [h("div", {}, [h("h2", { text: "Công việc theo bộ phận" }), h("div", { class: "desc", text: "Theo dõi việc cần làm của từng bộ phận." })])]));
@@ -1514,7 +1561,7 @@
         if (deptSel.value) q.set("department_id", deptSel.value);
         if (statusSel.value) q.set("status", statusSel.value);
         const d = await api("/api/tasks?" + q);
-        if (!pageCurrent() || mySeq !== loadSeq) return;
+        if (!ctx.isCurrent() || mySeq !== loadSeq) return;
         listWrap.textContent = "";
         pag.textContent = "";
         if (!d.data.items.length) {
@@ -1534,14 +1581,16 @@
           h("option", { value: "DISMISSED", selected: row.status === "DISMISSED", text: "Bỏ qua" }),
         ])]));
         st.tp = d.data.pagination.total_pages; pagination(pag, st.page, st.tp, (p) => { st.page = p; load(); });
-      } catch (e) { if (!pageCurrent() || mySeq !== loadSeq) return; listWrap.textContent = ""; listWrap.appendChild(errorBox(e.message, load)); }
+      } catch (e) { if (!ctx.isCurrent() || mySeq !== loadSeq) return; listWrap.textContent = ""; listWrap.appendChild(errorBox(e.message, load)); }
     }
     async function setStatus(row, sel) {
+      sel.disabled = true;
       try {
         await api("/api/tasks/" + row.id + "/status", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: sel.value }) });
         toast("Đã cập nhật."); load();
       } catch (e) {
         sel.value = row.status;
+        sel.disabled = false;
         toast(e.message, "error");
       }
     }
@@ -1567,6 +1616,7 @@
 
   /* ============================================================ scenarios */
   async function renderScenarios() {
+    const ctx = activePageCtx;
     const v = $("#view");
     v.textContent = "";
     v.appendChild(h("div", { class: "section-head" }, [h("div", {}, [h("h2", { text: "Kịch bản mô phỏng" }), h("div", { class: "desc", text: "Thử 3 tình huống với dữ liệu mô phỏng (tách khỏi dữ liệu vận hành)." })])]));
@@ -1580,7 +1630,7 @@
     card.appendChild(toolbar);
     const list = h("div", { class: "grid grid-3" });
     const info = await api("/api/scenarios");
-    if (!pageCurrent()) return;
+    if (!ctx.isCurrent()) return;
     info.data.forEach(s => list.appendChild(h("div", { class: "card" }, [
       h("div", { class: "card-title" }, [h("span", { text: s.title.replace(/^Kịch bản \d: /, "") }), badge("Mô phỏng", "amber")]),
       h("p", { class: "cell-sub", text: "Sự cố: " + s.incident_code }),
@@ -1590,7 +1640,7 @@
     ])));
     card.appendChild(list);
     const status = await api("/api/scenarios/status");
-    if (!pageCurrent()) return;
+    if (!ctx.isCurrent()) return;
     st.textContent = status.data.loaded ? "Đã nạp." : "Chưa nạp.";
   }
   async function loadDemo() {
@@ -1606,13 +1656,14 @@
 
   /* ============================================================ survey */
   async function renderSurvey() {
+    const ctx = activePageCtx;
     const v = $("#view");
     v.textContent = "";
     v.appendChild(h("div", { class: "section-head" }, [h("div", {}, [h("h2", { text: "Khảo sát & xác nhận" }), h("div", { class: "desc", text: "Theo dõi các thông tin cần xác nhận với nhà máy." })])]));
     const groups = await api("/api/survey/groups");
-    if (!pageCurrent()) return;
+    if (!ctx.isCurrent()) return;
     const items = await api("/api/survey");
-    if (!pageCurrent()) return;
+    if (!ctx.isCurrent()) return;
     const byGroup = {};
     items.data.forEach(i => { (byGroup[i.group_code] = byGroup[i.group_code] || []).push(i); });
     groups.data.forEach(g => {
@@ -1647,6 +1698,7 @@
 
   /* ============================================================ users (admin) */
   async function renderUsers() {
+    const ctx = activePageCtx;
     const v = $("#view");
     v.textContent = "";
     v.appendChild(h("div", { class: "section-head" }, [h("div", {}, [h("h2", { text: "Tài khoản & quyền" }), h("div", { class: "desc", text: "Quản lý tài khoản local và vai trò. Mật khẩu được băm; không lưu dạng văn bản." })])]));
@@ -1660,7 +1712,7 @@
       listWrap.textContent = ""; listWrap.appendChild(spinner());
       try {
         const d = await api("/api/auth/users");
-        if (!pageCurrent()) return;
+        if (!ctx.isCurrent()) return;
         listWrap.textContent = "";
         if (!d.data.length) { listWrap.appendChild(emptyBox("users", "Chưa có tài khoản", "Tạo tài khoản đầu tiên bằng script hoặc nút bên dưới.")); return; }
         renderTable(listWrap, [
@@ -1700,12 +1752,13 @@
   const pageState = {};
   let dataMode = localStorage.getItem("d3.mode") || "operations";
   async function renderDashboard() {
+    const ctx = activePageCtx;
     const v = $("#view");
     v.textContent = "";
     v.appendChild(spinner());
     let d;
-    try { d = await api("/api/dashboard?simulated=" + (dataMode === "simulation")); } catch (e) { if (!pageCurrent()) return; v.textContent = ""; v.appendChild(errorBox(e.message, renderDashboard)); return; }
-    if (!pageCurrent()) return;
+    try { d = await api("/api/dashboard?simulated=" + (dataMode === "simulation")); } catch (e) { if (!ctx.isCurrent()) return; v.textContent = ""; v.appendChild(errorBox(e.message, renderDashboard)); return; }
+    if (!ctx.isCurrent()) return;
     v.textContent = "";
     const s = d.data;
 
@@ -1913,6 +1966,7 @@
 
   function navigate(path) {
     if (currentHash() === path) return;
+    if (modalDirty && !window.confirm("Có thay đổi chưa lưu trong form. Bỏ thay đổi và chuyển trang?")) return;
     location.hash = "#/" + path;
   }
 
@@ -1940,7 +1994,8 @@
     $$(".nav-item").forEach(a => a.classList.toggle("active", a.dataset.route === route));
     $("#sidebar").classList.remove("open");
     removeBackdrop();
-    activeRenderToken = ++renderToken;
+    activePageCtx = createPageContext();
+    const pageCtx = activePageCtx;
     const v = $("#view");
     v.textContent = ""; v.appendChild(spinner());
     if (!cfg) { renderNotFound(); return; }
@@ -1949,14 +2004,14 @@
       const result = cfg.render({ parts, params });
       if (result && typeof result.then === "function") {
         result.catch((err) => {
-          if (!pageCurrent()) return;
+          if (!pageCtx.isCurrent()) return;
           if (err && err.status === 401) return;
           v.textContent = "";
           v.appendChild(errorBox((err && err.message) || "Không tải được trang.", () => renderRoute()));
         });
       }
     } catch (err) {
-      if (!pageCurrent()) return;
+      if (!pageCtx.isCurrent()) return;
       v.textContent = "";
       v.appendChild(errorBox((err && err.message) || "Lỗi khi hiển thị trang.", () => renderRoute()));
     }
@@ -1966,7 +2021,14 @@
   $("#nav-toggle").addEventListener("click", () => { $("#sidebar").classList.toggle("open"); toggleBackdrop(); });
   $("#collapse-toggle").addEventListener("click", () => { document.body.classList.toggle("sidebar-collapsed"); });
   $("#header-record").addEventListener("click", () => navigate("operations"));
-  $("#header-incident").addEventListener("click", () => navigate("incidents?new=1"));
+  $("#header-incident").addEventListener("click", () => {
+    const { parts } = parseHash();
+    if (parts[0] === "incidents" && !parts[1] && incidentFormOpener) {
+      incidentFormOpener();
+    } else {
+      navigate("incidents?new=1");
+    }
+  });
   function setMode(mode) {
     dataMode = mode; localStorage.setItem("d3.mode", mode);
     $$(".mode-btn").forEach(b => b.classList.toggle("active", b.dataset.mode === mode));
@@ -1990,5 +2052,11 @@
   function removeBackdrop() { const bd = $(".sidebar-backdrop"); if (bd) bd.remove(); }
 
   window.addEventListener("hashchange", renderRoute);
+  window.addEventListener("beforeunload", (e) => {
+    if (modalDirty) {
+      e.preventDefault();
+      e.returnValue = "";
+    }
+  });
   initAuth();
 })();
