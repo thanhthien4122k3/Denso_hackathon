@@ -1,8 +1,9 @@
 """Nghiệp vụ đồ thị: kiểm tra quan hệ hợp lệ và endpoint tồn tại."""
 
+from collections import defaultdict
 from datetime import datetime
 
-from app.exceptions import NotFoundError
+from app.exceptions import NotFoundError, ValidationFailedError
 from app.graph import validate_edge
 from app.repositories.graph_repository import GraphRepository
 
@@ -61,6 +62,9 @@ class GraphService:
     def create_edge(self, data: dict) -> dict:
         cleaned = self._clean(data, required_ids=True)
         validate_edge(cleaned["source_type"], cleaned["target_type"], cleaned["kind"])
+        if (cleaned["source_type"] == cleaned["target_type"]
+                and cleaned["source_id"] == cleaned["target_id"]):
+            raise ValidationFailedError("Không thể tạo quan hệ tự nối (đối tượng trỏ tới chính nó).")
         if not self.repository.node_exists(cleaned["source_type"], cleaned["source_id"]):
             raise NotFoundError("Node nguồn không tồn tại.")
         if not self.repository.node_exists(cleaned["target_type"], cleaned["target_id"]):
@@ -81,7 +85,45 @@ class GraphService:
     def list_edges(self, page, page_size, kind, is_simulated):
         return self.repository.list_edges(page, page_size, kind, is_simulated)
 
-    def get_map(self, types=None):
+    def get_map(self, types=None, center=None, depth=None):
         nodes = self.repository.list_nodes(types)
         edges = self.repository.all_edges()
+        if center and depth:
+            try:
+                ctype, cid = center.split(":", 1)
+                cid = int(cid)
+            except (ValueError, AttributeError):
+                raise ValidationFailedError("center phải có dạng 'type:id'.")
+            nodes, edges = self._neighborhood(nodes, edges, ctype, cid, depth)
         return {"nodes": nodes, "edges": edges}
+
+    @staticmethod
+    def _neighborhood(nodes, edges, center_type, center_id, depth):
+        node_set = {(n["type"], n["id"]) for n in nodes}
+        adj = defaultdict(set)
+        for e in edges:
+            s = (e["source_type"], e["source_id"])
+            t = (e["target_type"], e["target_id"])
+            if s in node_set and t in node_set:
+                adj[s].add(t)
+                adj[t].add(s)
+        start = (center_type, center_id)
+        if start not in node_set:
+            return [], []
+        visited = {start}
+        frontier = {start}
+        for _ in range(depth):
+            nxt = set()
+            for n in frontier:
+                for m in adj.get(n, ()):
+                    if m not in visited:
+                        visited.add(m)
+                        nxt.add(m)
+            frontier = nxt
+        nodes_out = [n for n in nodes if (n["type"], n["id"]) in visited]
+        edges_out = [
+            e for e in edges
+            if (e["source_type"], e["source_id"]) in visited
+            and (e["target_type"], e["target_id"]) in visited
+        ]
+        return nodes_out, edges_out

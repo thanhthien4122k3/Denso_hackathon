@@ -148,6 +148,37 @@ def test_run_snapshot_contract_and_action_ids(d3):
     assert any(r["id"] == res["run_id"] for r in filtered)
 
 
+def test_scope_isolates_simulated_from_real_operations(d3):
+    from app.repositories.context_repository import ContextRepository
+    from app.scenario_d3 import dt
+
+    machine = _by_code(d3, "/api/catalog/machine", "M10")
+    lot = _by_code(d3, "/api/catalog/lot", "LOT-B")
+    process = _by_code(d3, "/api/catalog/process", "P10")
+
+    # Thêm một operation THẬT (is_simulated=False) trùng máy/thời điểm.
+    ContextRepository().create_operation({
+        "lot_id": lot["id"], "process_id": process["id"], "machine_id": machine["id"],
+        "started_at": dt("2026-10-06T09:55:00+07:00"), "ended_at": None,
+        "status": "IN_PROGRESS", "is_simulated": False,
+    })
+
+    inc = d3.post("/api/incidents", json={
+        "code": "INC-SCOPE-01", "title": "scope", "incident_type": "MACHINE_STOP",
+        "source_object_type": "machine", "source_object_id": machine["id"],
+        "start_time": "2026-10-06T10:00:00+07:00", "severity": "HIGH",
+        "description": "scope", "status": "OPEN",
+        "request_id": "550e8400-e29b-41d4-a716-4466554400bb",
+        "is_simulated": True,
+    })
+    assert inc.status_code == 201
+    iid = inc.json()["data"]["id"]
+    res = d3.post("/api/analysis/run", json={"incident_id": iid, "max_depth": 5}).json()["data"]
+    # Sự cố mô phỏng chỉ thấy operation mô phỏng (LOT-B), không bị AMBIGUOUS vì operation thật.
+    assert res["context"]["status"] == "MATCHED"
+    assert res["context"]["lot_code"] == "LOT-B"
+
+
 def test_d3_task_from_action_no_duplicate(d3):
     machine = _by_code(d3, "/api/catalog/machine", "M10")
     incidents = d3.get("/api/incidents?search=INC-DEMO-01").json()["data"]["items"]

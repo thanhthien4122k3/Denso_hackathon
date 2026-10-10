@@ -50,11 +50,15 @@
     clearTimeout(t._timer); t._timer = setTimeout(() => { t.className = "toast"; }, 4200);
   }
 
-  /* Vòng đời trang: mỗi lần render có token riêng; request/continuation chỉ
-     cập nhật DOM nếu token vẫn là token hiện tại. */
-  let renderToken = 0;
-  let activeRenderToken = 0;
-  function pageCurrent() { return activeRenderToken === renderToken; }
+  /* Vòng đời trang: mỗi lần render tạo một context có version bất biến.
+     Continuation chỉ được cập nhật DOM khi version của nó vẫn là version hiện
+     tại. Hàm render phải capture context ở đầu và dùng ctx.isCurrent(). */
+  let pageVersion = 0;
+  let activePageCtx = null;
+  function createPageContext() {
+    const version = ++pageVersion;
+    return { isCurrent: () => version === pageVersion };
+  }
 
   let modalDirty = false;
   let modalOpener = null;
@@ -352,7 +356,7 @@
     return CATALOG_KEYS;
   }
   async function loadOptions(key) {
-    const d = await api("/api/catalog/" + key + "?page_size=200");
+    const d = await api("/api/catalog/" + key + "?page_size=100");
     return d.data.items.map((r) => ({ value: r.id, label: r.name, code: r.code }));
   }
   const CATALOG_EXTRA = {
@@ -367,11 +371,12 @@
   };
 
   async function renderCatalog() {
+    const ctx = activePageCtx;
     const v = $("#view");
     v.textContent = "";
     v.appendChild(h("div", { class: "section-head" }, [h("div", {}, [h("h2", { text: "Danh mục sản xuất" }), h("div", { class: "desc", text: "Bộ phận, chuyền, công đoạn, máy, vật tư, sản phẩm, lệnh và lot." })])]));
     const keys = await loadCatalogKeys();
-    if (!pageCurrent()) return;
+    if (!ctx.isCurrent()) return;
     const tabs = h("div", { class: "tabs" });
     const card = h("div", { class: "card" });
     v.appendChild(h("div", { class: "card" }, [tabs, card]));
@@ -523,7 +528,7 @@
       } catch (e) { listWrap.textContent = ""; listWrap.appendChild(errorBox(e.message, load)); }
     }
     async function datasetForm(row) {
-      const srcs = (await api("/api/system/sources?page_size=200")).data.items.map(r => ({ value: r.id, label: r.code, code: r.code }));
+      const srcs = (await api("/api/system/sources?page_size=100")).data.items.map(r => ({ value: r.id, label: r.code, code: r.code }));
       const depts = await loadOptions("department");
       const fields = [
         { name: "code", label: "Mã", required: true }, { name: "name", label: "Tên", required: true },
@@ -548,9 +553,10 @@
     load();
   }
   async function viewFields(body, token, isActive) {
+    const ctx = activePageCtx;
     const toolbar = h("div", { class: "toolbar" }); const listWrap = h("div");
-    const datasets = (await api("/api/system/datasets?page_size=200")).data.items;
-    if (!pageCurrent() || (isActive && !isActive())) return;
+    const datasets = (await api("/api/system/datasets?page_size=100")).data.items;
+    if (!ctx.isCurrent() || (isActive && !isActive())) return;
     const sel = selectInput("ds", datasets.map(r => ({ value: r.id, label: r.code })), datasets[0] && datasets[0].id);
     toolbar.appendChild(field("Dataset", sel));
     toolbar.appendChild(h("button", { class: "btn btn-primary", text: "Thêm trường", onclick: () => fieldForm(sel.value) }));
@@ -594,7 +600,7 @@
       ], d.data.items, (row) => h("td", {}, [h("button", { class: "btn btn-sm btn-ghost", text: "Xóa", onclick: () => { if (confirm("Xóa?")) api("/api/system/flows/" + row.id, { method: "DELETE" }).then(() => { toast("Đã xóa."); load(); }).catch(e => toast(e.message, "error")); } })]));
     }
     async function flowForm(row) {
-      const datasets = (await api("/api/system/datasets?page_size=200")).data.items;
+      const datasets = (await api("/api/system/datasets?page_size=100")).data.items;
       const opts = datasets.map(r => ({ value: r.id, label: r.code, code: r.code }));
       const fields = [
         { name: "code", label: "Mã", required: true }, { name: "name", label: "Tên", required: true },
@@ -682,18 +688,28 @@
   }
 
   function viewProduction(body) {
-    body.appendChild(productionForm());
+    const ctx = activePageCtx;
+    function loadRecent() {
+      listWrap.textContent = ""; listWrap.appendChild(spinner());
+      api("/api/production-records?page_size=10").then(d => {
+        if (!ctx.isCurrent()) return;
+        listWrap.textContent = "";
+        renderTable(listWrap, [
+          { key: "id", label: "ID" }, { key: "production_date", label: "Ngày" }, { key: "shift", label: "Ca" },
+          { key: "line_code", label: "Chuyền" }, { key: "process_code", label: "Công đoạn" }, { key: "lot_code", label: "Lot" },
+          { key: "good_quantity", label: "Đạt" }, { key: "defect_quantity", label: "Lỗi" },
+        ], d.data.items);
+      }).catch((e) => {
+        if (!ctx.isCurrent()) return;
+        listWrap.textContent = "";
+        listWrap.appendChild(errorBox(e.message, loadRecent));
+      });
+    }
+    body.appendChild(productionForm(loadRecent));
     const head = h("div", { class: "card-title", style: "margin-top:16px;" }, [h("span", { text: "Bản ghi gần nhất" })]);
     const listWrap = h("div");
     body.appendChild(h("div", { class: "card" }, [head, listWrap]));
-    api("/api/production-records?page_size=10").then(d => {
-      if (!pageCurrent()) return;
-      renderTable(listWrap, [
-        { key: "id", label: "ID" }, { key: "production_date", label: "Ngày" }, { key: "shift", label: "Ca" },
-        { key: "line_code", label: "Chuyền" }, { key: "process_code", label: "Công đoạn" }, { key: "lot_code", label: "Lot" },
-        { key: "good_quantity", label: "Đạt" }, { key: "defect_quantity", label: "Lỗi" },
-      ], d.data.items);
-    }).catch((e) => { if (pageCurrent()) listWrap.appendChild(errorBox(e.message, viewProduction)); });
+    loadRecent();
   }
 
   async function viewStates(body) {
@@ -842,7 +858,9 @@
   }
 
   /* ============================================================ incidents */
+  let incidentFormOpener = null;
   async function renderIncidents(params) {
+    const ctx = activePageCtx;
     const v = $("#view");
     v.textContent = "";
     if (params.parts[1]) { renderIncidentDetail(params.parts[1]); return; }
@@ -881,7 +899,7 @@
         if (typeSel.value) q.set("incident_type", typeSel.value);
         if (search.value) q.set("search", search.value);
         const d = await api("/api/incidents?" + q);
-        if (!pageCurrent() || mySeq !== loadSeq) return;
+        if (!ctx.isCurrent() || mySeq !== loadSeq) return;
         listWrap.textContent = "";
         pag.textContent = "";
         if (!d.data.items.length) {
@@ -905,12 +923,20 @@
         pagination(pag, st.page, st.tp, (p) => { st.page = p; load(); });
         persist();
       } catch (e) {
-        if (!pageCurrent() || mySeq !== loadSeq) return;
+        if (!ctx.isCurrent() || mySeq !== loadSeq) return;
         listWrap.textContent = ""; listWrap.appendChild(errorBox(e.message, load));
       }
     }
     async function incidentForm(row) {
-      const depts = await loadOptions("department");
+      let depts = [];
+      try {
+        depts = await loadOptions("department");
+      } catch (e) {
+        toast("Không tải được danh sách bộ phận: " + (e && e.message ? e.message : "lỗi mạng"), "error");
+        return;
+      }
+      // Idempotency key ổn định cho một lần nhập; giữ nguyên khi retry.
+      const formRequestId = uuid();
       const fields = [
         { group: "Thông tin chung" },
         { name: "code", label: "Mã sự cố", required: true }, { name: "title", label: "Tiêu đề", required: true },
@@ -927,18 +953,23 @@
       const fb = formBuilder(fields, async (data, s) => {
         fb.setSubmitting(true);
         try {
-          const payload = { ...data, request_id: uuid(), start_time: data.start_time ? iso(data.start_time) : null, end_time: data.end_time ? iso(data.end_time) : null };
-          await api("/api/incidents", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-          closeModal(); toast("Đã tạo sự cố."); load();
+          const payload = { ...data, request_id: formRequestId, start_time: data.start_time ? iso(data.start_time) : null, end_time: data.end_time ? iso(data.end_time) : null };
+          const resp = await api("/api/incidents", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+          closeModal(); toast(resp.message || "Đã tạo sự cố."); load();
         } catch (e) { toast(e.message, "error"); fb.setSubmitting(false); }
       });
       openModal("Tạo sự cố", fb.form);
     }
+    incidentFormOpener = () => incidentForm(null);
     load();
-    if (params.params.get("new") === "1") incidentForm(null);
+    if (params.params.get("new") === "1") {
+      incidentForm(null);
+      history.replaceState(null, "", "#/incidents");
+    }
   }
 
   async function renderIncidentDetail(id) {
+    const ctx = activePageCtx;
     const v = $("#view");
     v.textContent = "";
 
@@ -964,7 +995,7 @@
     let inc;
     try {
       inc = (await api("/api/incidents/" + id)).data;
-      if (!pageCurrent()) return;
+      if (!ctx.isCurrent()) return;
       summaryCard.appendChild(h("div", { class: "card-title" }, [h("span", { text: inc.code + " — " + inc.title }), simBadge(inc)]));
       summaryCard.appendChild(h("div", { class: "kv-list" }, [
         kv("Loại", typeLabel(inc.incident_type)), kv("Mức độ", null, severityBadge(inc.severity)),
@@ -976,7 +1007,7 @@
       if (inc.description) summaryCard.appendChild(h("div", { class: "explain", style: "margin-top:12px;" }, [h("h4", { text: "Quan sát (triệu chứng)" }), h("div", { text: inc.description })]));
       renderActionCard(actCard, inc, id);
     } catch (e) {
-      if (!pageCurrent()) return;
+      if (!ctx.isCurrent()) return;
       summaryCard.appendChild(errorBox(e.message, () => renderIncidentDetail(id)));
       return;
     }
@@ -989,14 +1020,15 @@
   }
 
   function asyncSection(card, title, fetcher, renderer) {
+    const ctx = activePageCtx;
     card.appendChild(h("div", { class: "card-title" }, [h("span", { text: title })]));
     const body = h("div");
     card.appendChild(body);
     function run() {
       body.textContent = ""; body.appendChild(spinner());
       fetcher()
-        .then((d) => { if (!pageCurrent()) return; body.textContent = ""; renderer(body, d); })
-        .catch((e) => { if (!pageCurrent()) return; body.textContent = ""; body.appendChild(errorBox(e.message, run)); });
+        .then((d) => { if (!ctx.isCurrent()) return; body.textContent = ""; renderer(body, d); })
+        .catch((e) => { if (!ctx.isCurrent()) return; body.textContent = ""; body.appendChild(errorBox(e.message, run)); });
     }
     run();
   }
@@ -1004,7 +1036,7 @@
   function renderActionCard(actCard, inc, id) {
     actCard.appendChild(h("div", { class: "card-title" }, [h("span", { text: "Thao tác" })]));
     const statusRow = h("div", { class: "toolbar" });
-    const newStatus = selectInput("newstatus", ["OPEN", "INVESTIGATING", "MITIGATING", "RESOLVED"].map(x => ({ value: x, label: { OPEN: "Mở", INVESTIGATING: "Điều tra", MITIGATING: "Xử lý", RESOLVED: "Giải quyết" }[x] })), inc.status);
+    const newStatus = selectInput("newstatus", ["OPEN", "INVESTIGATING", "MITIGATING"].map(x => ({ value: x, label: { OPEN: "Mở", INVESTIGATING: "Điều tra", MITIGATING: "Xử lý" }[x] })), inc.status);
     statusRow.appendChild(field("Chuyển trạng thái", newStatus));
     statusRow.appendChild(h("button", { class: "btn btn-secondary", text: "Cập nhật", onclick: async () => {
       try { await api("/api/incidents/" + id, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: newStatus.value }) }); toast("Đã cập nhật trạng thái."); renderIncidentDetail(id); }
@@ -1061,14 +1093,15 @@
       });
   }
   function asyncSectionWrap(wrap, title, fetcher, renderer) {
+    const ctx = activePageCtx;
     wrap.appendChild(h("h4", { text: title, style: "margin:0 0 6px;" }));
     const body = h("div");
     wrap.appendChild(body);
     function run() {
       body.textContent = ""; body.appendChild(spinner());
       fetcher()
-        .then((d) => { if (!pageCurrent()) return; body.textContent = ""; renderer(body, d); })
-        .catch((e) => { if (!pageCurrent()) return; body.textContent = ""; body.appendChild(errorBox(e.message, run)); });
+        .then((d) => { if (!ctx.isCurrent()) return; body.textContent = ""; renderer(body, d); })
+        .catch((e) => { if (!ctx.isCurrent()) return; body.textContent = ""; body.appendChild(errorBox(e.message, run)); });
     }
     run();
   }
@@ -1161,87 +1194,461 @@
   }
 
   /* ============================================================ map */
+  const NODE_COLORS = {
+    department: ["#e3f2fd", "#1e88e5"], material: ["#fff3e0", "#f57c00"],
+    machine: ["#fce4ec", "#d81b60"], process: ["#e8f5e9", "#2e7d32"],
+    line: ["#f3e5f5", "#8e24aa"], product: ["#fff8e1", "#f9a825"],
+    order: ["#e0f7fa", "#00838f"], lot: ["#f1f8e9", "#558b2f"],
+    shift: ["#efebe9", "#6d4c41"], source: ["#eceff1", "#546e7a"],
+    dataset: ["#e8eaf6", "#3949ab"], field: ["#f5f5f5", "#757575"],
+  };
+  const NODE_LABELS = {
+    department: "Bộ phận", material: "Vật tư", machine: "Máy", process: "Công đoạn",
+    line: "Chuyền", product: "Sản phẩm", order: "Lệnh sản xuất", lot: "Lot", shift: "Ca sản xuất",
+    source: "Hệ thống nguồn", dataset: "Dataset", field: "Trường dữ liệu",
+  };
+  const EDGE_LABELS = {
+    production_dependency: "Phụ thuộc sản xuất", data_flow: "Luồng dữ liệu",
+    data_mapping: "Ánh xạ dữ liệu–nghiệp vụ", department_responsibility: "Trách nhiệm bộ phận",
+  };
+  const EDGE_STYLE = {
+    production_dependency: { color: "#c62828", dash: null, width: 2.5 },
+    data_flow: { color: "#1d4f91", dash: null, width: 2 },
+    data_mapping: { color: "#8a93a0", dash: "5 4", width: 1.6 },
+    department_responsibility: { color: "#b45309", dash: "2 2", width: 1.6 },
+  };
+  const TYPE_LANE = {
+    department: "department", material: "material", machine: "machine", process: "process", line: "line",
+    product: "output", order: "output", lot: "output", shift: "output",
+    source: "source", dataset: "dataset", field: "field",
+  };
+  const LANE_LABELS = {
+    department: "Bộ phận", material: "Vật tư", machine: "Máy", process: "Công đoạn", line: "Chuyền",
+    output: "Sản phẩm · Lệnh · Lot · Ca", source: "Hệ thống nguồn", dataset: "Dataset", field: "Trường dữ liệu",
+  };
+  const BUSINESS_TYPES = ["department", "line", "process", "machine", "material", "product", "order", "lot", "shift"];
+  const SYSTEM_TYPES = ["source", "dataset", "field"];
+  const BUSINESS_LANES = ["department", "material", "machine", "process", "line", "output"];
+  const SYSTEM_LANES = ["source", "dataset", "field"];
+  const IMPACT_LABEL = { DIRECT: "Trực tiếp", INDIRECT: "Gián tiếp", RISK: "Rủi ro", OBSERVED: "Đã quan sát", ESTIMATED: "Ước tính" };
+  const IMPACT_COLOR = { DIRECT: "#c62828", INDIRECT: "#b45309", RISK: "#8a93a0", OBSERVED: "#1a7f3c", ESTIMATED: "#1d4f91" };
+  const NODE_W = 150, NODE_H = 64, LANE_W = 178;
+
+  const nkey = (t, i) => t + ":" + i;
+  function trunc(s, n) { s = s || ""; return s.length > n ? s.slice(0, n - 1) + "…" : s; }
+  function edgePath(a, b) {
+    const dx = b.x - a.x || 1;
+    const bend = Math.min(Math.abs(dx) * 0.4, 70) || 24;
+    const s = dx >= 0 ? 1 : -1;
+    return "M " + a.x + " " + a.y + " C " + (a.x + s * bend) + " " + a.y + ", " + (b.x - s * bend) + " " + b.y + ", " + b.x + " " + b.y;
+  }
+
   async function renderMap() {
+    const ctx = activePageCtx;
     const v = $("#view");
     v.textContent = "";
     v.appendChild(h("div", { class: "section-head" }, [h("div", {}, [h("h2", { text: "Bản đồ liên kết" }), h("div", { class: "desc", text: "Xem quan hệ giữa máy, công đoạn, vật tư, sản phẩm và dữ liệu." })])]));
     const card = h("div", { class: "card" });
     v.appendChild(card);
-    const meta = await api("/api/graph/meta");
-    if (!pageCurrent()) return;
+
+    let meta = { node: {}, edge: {} };
+    try {
+      const m = await api("/api/graph/meta");
+      m.data.node_types.forEach(t => { meta.node[t.type] = t.label; });
+      m.data.edge_kinds.forEach(k => { meta.edge[k.kind] = k.label; });
+    } catch (e) { /* meta chỉ là nhãn phụ */ }
+    if (!ctx.isCurrent()) return;
+
+    const nodeLabel = (t) => meta.node[t] || NODE_LABELS[t] || t;
+    const edgeLabel = (k) => meta.edge[k] || EDGE_LABELS[k] || k;
+
     const toolbar = h("div", { class: "graph-toolbar" });
-    const modeSel = selectInput("mode", [{ value: "business", label: "Nghiệp vụ sản xuất" }, { value: "system", label: "Logic hệ thống" }, { value: "combined", label: "Kết hợp hai lớp" }]);
+    const modeSel = selectInput("mode", [
+      { value: "business", label: "Chuỗi sản xuất" },
+      { value: "system", label: "Luồng dữ liệu" },
+      { value: "combined", label: "Kết hợp" },
+      { value: "incident", label: "Theo sự cố" },
+    ]);
+    const incSel = selectInput("incident", []);
     const search = h("input", { placeholder: "Tìm node theo mã/tên..." });
-    const depthSel = selectInput("depth", [1, 2, 3].map(x => ({ value: x, label: x + " bước" })), 2);
+    const depthSel = selectInput("depth", [1, 2, 3, 4, 5].map(x => ({ value: x, label: x + " bước" })), 2);
     toolbar.appendChild(field("Chế độ", modeSel));
     toolbar.appendChild(field("Độ sâu", depthSel));
-    toolbar.appendChild(h("div", { class: "search-box", style: "min-width:200px;" }, [icon("search"), search]));
+    toolbar.appendChild(h("div", { class: "search-box", style: "min-width:180px;" }, [icon("search"), search]));
     toolbar.appendChild(h("div", { class: "spacer" }));
-    toolbar.appendChild(h("button", { class: "btn btn-secondary btn-sm", text: "Fit view", onclick: () => draw() }));
-    toolbar.appendChild(h("button", { class: "btn btn-secondary btn-sm", text: "Toàn bộ", onclick: () => draw() }));
-    toolbar.appendChild(h("button", { class: "btn btn-secondary btn-sm", text: "Thêm quan hệ", onclick: () => edgeForm() }));
+    toolbar.appendChild(h("button", { class: "btn btn-secondary btn-sm", text: "+", title: "Phóng to", onclick: () => zoomBy(1.25) }));
+    toolbar.appendChild(h("button", { class: "btn btn-secondary btn-sm", text: "−", title: "Thu nhỏ", onclick: () => zoomBy(0.8) }));
+    toolbar.appendChild(h("button", { class: "btn btn-secondary btn-sm", text: "Vừa khung", onclick: fitView }));
+    toolbar.appendChild(h("button", { class: "btn btn-secondary btn-sm", text: "Toàn bộ", onclick: resetAll }));
+    toolbar.appendChild(h("button", { class: "btn btn-secondary btn-sm", text: "Thêm quan hệ", onclick: edgeForm }));
     card.appendChild(toolbar);
 
-    const legend = h("div", { class: "legend" });
-    const kinds = { production_dependency: ["Phụ thuộc sản xuất", "prod", "solid"], data_flow: ["Luồng dữ liệu", "data", "solid"], data_mapping: ["Ánh xạ dữ liệu–nghiệp vụ", "map", "dashed"], department_responsibility: ["Trách nhiệm bộ phận", "dept", "dotted"] };
-    Object.keys(kinds).forEach((k) => legend.appendChild(h("span", { class: "lg" }, [h("span", { class: "swatch " + kinds[k][1] }), kinds[k][0]])));
-    card.appendChild(legend);
+    card.appendChild(buildLegend());
 
     const wrap = h("div", { class: "graph-wrap" });
     card.appendChild(wrap);
+    const tip = h("div", { class: "graph-tooltip" });
     const detail = h("div", { class: "card" });
     v.appendChild(detail);
 
-    let graphData = null;
+    let graphData = { nodes: [], edges: [] };
+    const view = { tx: 0, ty: 0, scale: 1 };
+    let selectedKey = null;
+    let highlightSet = null;
+    let searchSet = null;
+    let impactNodes = {};
+    let impactEdges = new Set();
+    let bbox = { w: 300, h: 200 };
+    let nodeEls = [];
+    let edgeEls = [];
+    let svgEl = null, vpEl = null;
+
+    function buildLegend() {
+      const frame = h("details", { class: "legend-frame" });
+      frame.appendChild(h("summary", { text: "Cách đọc bản đồ" }));
+      const read = h("div", { class: "read" });
+      read.appendChild(h("div", { text: "• Mũi tên: hướng quan hệ (A → B nghĩa là A ảnh hưởng/cung cấp cho B)." }));
+      read.appendChild(h("div", { text: "• Nét liền đậm: phụ thuộc sản xuất (có thể lan truyền sự cố). Nét đứt/chấm: ánh xạ dữ liệu hoặc trách nhiệm bộ phận." }));
+      read.appendChild(h("div", { text: "• Node nền nhạt + viền nét đứt: dữ liệu mô phỏng (chưa xác nhận bởi Denso)." }));
+      frame.appendChild(read);
+
+      const legend = h("div", { class: "legend" });
+      Object.keys(NODE_COLORS).forEach(t => {
+        const c = NODE_COLORS[t];
+        legend.appendChild(h("span", { class: "lg" }, [h("span", { class: "swatch", style: "background:" + c[0] + ";border-color:" + c[1] + ";" }), nodeLabel(t)]));
+      });
+      Object.keys(EDGE_STYLE).forEach(k => {
+        const s = EDGE_STYLE[k];
+        const line = h("span", { class: "swatch-line", style: "border-color:" + s.color + ";" + (s.dash === "5 4" ? "border-top-style:dashed;" : s.dash === "2 2" ? "border-top-style:dotted;" : "") });
+        legend.appendChild(h("span", { class: "lg" }, [line, edgeLabel(k)]));
+      });
+      frame.appendChild(legend);
+      return frame;
+    }
+
     async function loadGraph() {
       wrap.textContent = ""; wrap.appendChild(spinner());
       try {
         const d = await api("/api/graph/map");
+        if (!ctx.isCurrent()) return;
         graphData = d.data;
+        if (graphData.nodes.length > 200) toast("Đồ thị lớn (" + graphData.nodes.length + " node). Dùng tìm kiếm để xem vùng lân cận.", "error");
         draw();
-      } catch (e) { wrap.textContent = ""; wrap.appendChild(errorBox(e.message, loadGraph)); }
-    }
-    function draw() {
-      if (!graphData) return;
-      wrap.textContent = "";
-      let nodes = graphData.nodes, edges = graphData.edges;
-      const mode = modeSel.value;
-      const businessTypes = ["department", "line", "process", "machine", "material", "product", "order", "lot", "shift"];
-      const systemTypes = ["source", "dataset", "field"];
-      if (mode === "business") { nodes = nodes.filter(n => businessTypes.includes(n.type)); edges = edges.filter(e => businessTypes.includes(e.source_type) && businessTypes.includes(e.target_type)); }
-      else if (mode === "system") { nodes = nodes.filter(n => systemTypes.includes(n.type)); edges = edges.filter(e => systemTypes.includes(e.source_type) && systemTypes.includes(e.target_type)); }
-      if (search.value) {
-        const q = search.value.toLowerCase();
-        const matched = nodes.filter(n => n.name.toLowerCase().includes(q) || (n.code || "").toLowerCase().includes(q));
-        const ids = new Set(matched.map(n => n.type + ":" + n.id));
-        edges = edges.filter(e => ids.has(e.source_type + ":" + e.source_id) || ids.has(e.target_type + ":" + e.target_id));
-        const edgeIds = new Set();
-        edges.forEach(e => { edgeIds.add(e.source_type + ":" + e.source_id); edgeIds.add(e.target_type + ":" + e.target_id); });
-        nodes = nodes.filter(n => edgeIds.has(n.type + ":" + n.id));
+      } catch (e) {
+        if (!ctx.isCurrent()) return;
+        wrap.textContent = ""; wrap.appendChild(errorBox(e.message, loadGraph));
       }
-      if (!nodes.length) { wrap.appendChild(emptyBox("map", "Không có dữ liệu để vẽ", "Thêm danh mục, thiết lập quan hệ hoặc nạp dữ liệu mô phỏng.")); return; }
-      drawGraph(wrap, nodes, edges, (n) => onNodeClick(n, edges));
     }
-    function onNodeClick(node, edges) {
-      detail.textContent = "";
-      const rels = edges.filter(e => (e.source_type === node.type && e.source_id === node.id) || (e.target_type === node.type && e.target_id === node.id));
-      detail.appendChild(h("div", { class: "card-title" }, [h("span", { text: node.name + " (" + node.type + ")" }), node.is_simulated ? badge("Mô phỏng", "amber") : null]));
-      if (!rels.length) { detail.appendChild(h("p", { class: "cell-sub", text: "Không có quan hệ nào." })); return; }
-      const ul = h("ul", { class: "path-list" });
-      rels.forEach(e => {
-        const dir = e.source_type === node.type ? "→" : "←";
-        const other = e.source_type === node.type ? (e.target_type + " #" + e.target_id) : (e.source_type + " #" + e.source_id);
-        ul.appendChild(h("li", {}, [h("div", { text: dir + " " + other }), h("div", { class: "hop", text: kinds[e.kind][0] + (e.label ? " — " + e.label : "") })]));
+    async function loadIncidents() {
+      try {
+        const d = await api("/api/incidents?page_size=100");
+        incSel.textContent = "";
+        incSel.appendChild(h("option", { value: "", text: "-- Chọn sự cố --" }));
+        d.data.items.forEach(i => incSel.appendChild(h("option", { value: i.id, text: i.code + " — " + i.title })));
+      } catch (e) { /* không chặn bản đồ */ }
+    }
+
+    function filtered() {
+      let nodes = graphData.nodes.slice(), edges = graphData.edges.slice();
+      const mode = modeSel.value;
+      if (mode === "business") {
+        nodes = nodes.filter(n => BUSINESS_TYPES.includes(n.type));
+        edges = edges.filter(e => BUSINESS_TYPES.includes(e.source_type) && BUSINESS_TYPES.includes(e.target_type));
+      } else if (mode === "system") {
+        nodes = nodes.filter(n => SYSTEM_TYPES.includes(n.type));
+        edges = edges.filter(e => SYSTEM_TYPES.includes(e.source_type) && SYSTEM_TYPES.includes(e.target_type));
+      }
+      return { nodes, edges };
+    }
+
+    function computeLayout(nodes) {
+      const byLane = {};
+      nodes.forEach(n => { const lk = TYPE_LANE[n.type] || "output"; (byLane[lk] = byLane[lk] || []).push(n); });
+      Object.keys(byLane).forEach(k => byLane[k].sort((a, b) => (a.name || a.code || "").localeCompare(b.name || b.code || "")));
+      const pos = {}; const lanes = [];
+      const padX = 40, padY = 46, laneGap = 24, headerH = 34, nodeGap = 16;
+      const busKeys = BUSINESS_LANES.filter(k => byLane[k]);
+      const sysKeys = SYSTEM_LANES.filter(k => byLane[k]);
+      let x = padX, maxBus = 0;
+      busKeys.forEach(lk => {
+        const ln = byLane[lk]; maxBus = Math.max(maxBus, ln.length);
+        ln.forEach((n, i) => { pos[nkey(n.type, n.id)] = { x: x + LANE_W / 2, y: padY + headerH + i * (NODE_H + nodeGap) + NODE_H / 2 }; });
+        lanes.push({ label: LANE_LABELS[lk] || lk, x: x + LANE_W / 2, headerY: padY + headerH - 16 });
+        x += LANE_W + laneGap;
       });
-      detail.appendChild(ul);
+      const busBottom = padY + headerH + maxBus * (NODE_H + nodeGap);
+      const sysTop = busBottom + (sysKeys.length ? 70 : 0);
+      let sx = padX, maxSys = 0;
+      sysKeys.forEach(lk => {
+        const ln = byLane[lk]; maxSys = Math.max(maxSys, ln.length);
+        ln.forEach((n, i) => { pos[nkey(n.type, n.id)] = { x: sx + LANE_W / 2, y: sysTop + 30 + i * (NODE_H + nodeGap) + NODE_H / 2 }; });
+        lanes.push({ label: LANE_LABELS[lk] || lk, x: sx + LANE_W / 2, headerY: sysTop + 16 });
+        sx += LANE_W + laneGap;
+      });
+      const w = Math.max(x, sx, 320) + padX;
+      const h = (sysKeys.length ? sysTop + 30 + maxSys * (NODE_H + nodeGap) : busBottom) + 30;
+      return { pos, lanes, w, h, hasSystem: sysKeys.length > 0, sysTop };
     }
+
+    function showTip(ev, text) {
+      tip.textContent = text; tip.classList.add("visible");
+      const r = wrap.getBoundingClientRect();
+      tip.style.left = (ev.clientX - r.left + 12) + "px";
+      tip.style.top = (ev.clientY - r.top + 12) + "px";
+    }
+    function hideTip() { tip.classList.remove("visible"); }
+
+    function draw() {
+      wrap.textContent = ""; wrap.appendChild(tip);
+      const { nodes, edges } = filtered();
+      if (!nodes.length) {
+        wrap.appendChild(emptyBox("map", "Không có dữ liệu để vẽ", "Thêm danh mục, thiết lập quan hệ hoặc nạp dữ liệu mô phỏng."));
+        return;
+      }
+      const layout = computeLayout(nodes);
+      const pos = layout.pos;
+      bbox = { w: layout.w, h: layout.h };
+
+      const svg = hNS("svg", { class: "graph-svg", viewBox: "0 0 " + layout.w + " " + layout.h });
+      const defs = hNS("defs", {});
+      Object.keys(EDGE_STYLE).forEach(k => {
+        const mk = hNS("marker", { id: "arrow-" + k, viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 6, markerHeight: 6, orient: "auto" });
+        mk.appendChild(hNS("path", { d: "M0,0 L10,5 L0,10 z", fill: EDGE_STYLE[k].color }));
+        defs.appendChild(mk);
+      });
+      svg.appendChild(defs);
+
+      const vp = hNS("g", { transform: "translate(" + view.tx + "," + view.ty + ") scale(" + view.scale + ")" });
+      if (layout.hasSystem) {
+        const rt = hNS("text", { class: "region-title", x: 40, y: layout.sysTop - 26, "text-anchor": "start" });
+        rt.textContent = "Logic hệ thống dữ liệu";
+        vp.appendChild(rt);
+      }
+      layout.lanes.forEach(lane => {
+        const t = hNS("text", { class: "lane-title", x: lane.x, y: lane.headerY, "text-anchor": "middle" });
+        t.textContent = lane.label;
+        vp.appendChild(t);
+      });
+
+      const nodeById = {};
+      nodes.forEach(n => { nodeById[nkey(n.type, n.id)] = n; });
+      const edgeKeyOf = (e) => e.source_type + ":" + e.source_id + "->" + e.target_type + ":" + e.target_id;
+      edgeEls = [];
+      edges.forEach(e => {
+        const a = pos[nkey(e.source_type, e.source_id)], b = pos[nkey(e.target_type, e.target_id)];
+        if (!a || !b) return;
+        const st = EDGE_STYLE[e.kind] || EDGE_STYLE.production_dependency;
+        const p = hNS("path", { class: "graph-edge", d: edgePath(a, b), fill: "none", stroke: st.color, "stroke-width": st.width, "stroke-dasharray": st.dash || "none", "marker-end": "url(#arrow-" + e.kind + ")" });
+        p.addEventListener("mousemove", (ev) => showTip(ev, (nodeById[nkey(e.source_type, e.source_id)] || {}).name + " → " + (nodeById[nkey(e.target_type, e.target_id)] || {}).name + ": " + edgeLabel(e.kind) + (e.label ? " (" + e.label + ")" : "")));
+        p.addEventListener("mouseleave", hideTip);
+        vp.appendChild(p);
+        edgeEls.push({ el: p, key: edgeKeyOf(e), impacted: impactEdges.has(edgeKeyOf(e)) });
+      });
+
+      nodeEls = [];
+      nodes.forEach(n => {
+        const p = pos[nkey(n.type, n.id)];
+        const g = hNS("g", { class: "graph-node", transform: "translate(" + (p.x - NODE_W / 2) + "," + (p.y - NODE_H / 2) + ")" });
+        g.setAttribute("tabindex", "0");
+        g.setAttribute("role", "button");
+        g.setAttribute("aria-label", nodeLabel(n.type) + " " + (n.name || "") + (n.code ? " (" + n.code + ")" : ""));
+        const c = NODE_COLORS[n.type] || ["#fff", "#999"];
+        const rect = hNS("rect", { width: NODE_W, height: NODE_H, rx: 8, fill: c[0], stroke: c[1] });
+        if (n.is_simulated) rect.setAttribute("stroke-dasharray", "5 4");
+        const nameT = hNS("text", { x: NODE_W / 2, y: 26, "text-anchor": "middle", fill: "#1f2933", "font-weight": "600", "font-size": "13" });
+        nameT.textContent = trunc(n.name || "", 20);
+        const codeT = hNS("text", { x: NODE_W / 2, y: 42, "text-anchor": "middle", fill: "#5b6572", "font-size": "11" });
+        codeT.textContent = n.code ? trunc(n.code, 20) : "";
+        const typeT = hNS("text", { x: NODE_W / 2, y: 57, "text-anchor": "middle", fill: c[1], "font-size": "10", "font-weight": "600" });
+        typeT.textContent = nodeLabel(n.type);
+        g.appendChild(rect); g.appendChild(nameT); g.appendChild(codeT); g.appendChild(typeT);
+        if (n.is_simulated) {
+          const b = hNS("g", { transform: "translate(" + (NODE_W - 12) + ",12)" });
+          b.appendChild(hNS("circle", { r: 5, fill: "#b45309" }));
+          b.appendChild(hNS("title", {})).textContent = "Dữ liệu mô phỏng";
+          g.appendChild(b);
+        }
+        g.addEventListener("click", () => selectNode(nkey(n.type, n.id)));
+        g.addEventListener("keydown", (ev) => { if (ev.key === "Enter") { ev.preventDefault(); selectNode(nkey(n.type, n.id)); } });
+        g.addEventListener("mousemove", (ev) => showTip(ev, nodeLabel(n.type) + ": " + (n.name || "") + (n.code ? " (" + n.code + ")" : "")));
+        g.addEventListener("mouseleave", hideTip);
+        vp.appendChild(g);
+        nodeEls.push({ key: nkey(n.type, n.id), el: g });
+      });
+
+      svg.appendChild(vp);
+      wrap.appendChild(svg);
+      svgEl = svg; vpEl = vp;
+
+      attachPanZoom(svg, vp);
+      applyHighlight();
+      if (searchSet && searchSet.size) centerOnFirstSearch(pos);
+    }
+
+    function attachPanZoom(svg, vp) {
+      let drag = null;
+      svg.addEventListener("pointerdown", (e) => {
+        if (e.target === svg) { drag = { x: e.clientX, y: e.clientY, tx: view.tx, ty: view.ty }; svg.setPointerCapture(e.pointerId); }
+      });
+      svg.addEventListener("pointermove", (e) => {
+        if (!drag) return;
+        view.tx = drag.tx + (e.clientX - drag.x); view.ty = drag.ty + (e.clientY - drag.y);
+        vp.setAttribute("transform", "translate(" + view.tx + "," + view.ty + ") scale(" + view.scale + ")");
+      });
+      svg.addEventListener("pointerup", () => { drag = null; });
+      svg.addEventListener("pointercancel", () => { drag = null; });
+      svg.addEventListener("wheel", (e) => {
+        e.preventDefault();
+        zoomBy(e.deltaY < 0 ? 1.15 : 0.87);
+      }, { passive: false });
+    }
+    function zoomBy(f) {
+      view.scale = Math.max(0.15, Math.min(4, view.scale * f));
+      if (vpEl) vpEl.setAttribute("transform", "translate(" + view.tx + "," + view.ty + ") scale(" + view.scale + ")");
+    }
+    function fitView() {
+      const cw = wrap.clientWidth || 800, ch = wrap.clientHeight || 480;
+      const s = Math.min((cw - 60) / bbox.w, (ch - 60) / bbox.h);
+      view.scale = Math.max(0.05, Math.min(2, s));
+      view.tx = (cw - bbox.w * view.scale) / 2;
+      view.ty = (ch - bbox.h * view.scale) / 2;
+      if (vpEl) vpEl.setAttribute("transform", "translate(" + view.tx + "," + view.ty + ") scale(" + view.scale + ")");
+    }
+    function resetAll() {
+      search.value = ""; searchTerm = "";
+      selectedKey = null; highlightSet = null; searchSet = null; impactNodes = {}; impactEdges = new Set();
+      modeSel.value = "business";
+      view.tx = 0; view.ty = 0; view.scale = 1;
+      draw();
+    }
+
+    function applyHighlight() {
+      nodeEls.forEach(ne => {
+        const g = ne.el;
+        const hasSearch = searchSet && searchSet.size;
+        const hasSel = highlightSet && highlightSet.size;
+        let dim = false, outline = false, impactStroke = null;
+        if (impactNodes[ne.key]) impactStroke = IMPACT_COLOR[impactNodes[ne.key].impact_type] || "#c62828";
+        if (hasSel) { dim = !highlightSet.has(ne.key); }
+        else if (hasSearch) { outline = searchSet.has(ne.key); }
+        g.classList.toggle("dimmed", dim);
+        const rect = g.querySelector("rect");
+        if (rect) {
+          if (impactStroke) rect.setAttribute("stroke", impactStroke);
+          if (outline) { rect.setAttribute("stroke-width", "3"); }
+        }
+      });
+      edgeEls.forEach(ee => {
+        if (impactNodes && Object.keys(impactNodes).length) ee.el.classList.toggle("highlight", ee.impacted);
+        else ee.el.classList.remove("highlight");
+      });
+    }
+
+    function centerOnFirstSearch(pos) {
+      const first = Array.from(searchSet)[0];
+      const p = pos[first];
+      if (!p) return;
+      const cw = wrap.clientWidth || 800, ch = wrap.clientHeight || 480;
+      view.tx = cw / 2 - p.x * view.scale;
+      view.ty = ch / 2 - p.y * view.scale;
+      if (vpEl) vpEl.setAttribute("transform", "translate(" + view.tx + "," + view.ty + ") scale(" + view.scale + ")");
+    }
+
+    function neighborSet(startKey, depth) {
+      const adj = {};
+      const keys = new Set();
+      graphData.nodes.forEach(n => keys.add(nkey(n.type, n.id)));
+      graphData.edges.forEach(e => {
+        const s = nkey(e.source_type, e.source_id), t = nkey(e.target_type, e.target_id);
+        if (!keys.has(s) || !keys.has(t)) return;
+        (adj[s] = adj[s] || []).push(t);
+        (adj[t] = adj[t] || []).push(s);
+      });
+      const visited = new Set([startKey]);
+      let frontier = [startKey];
+      for (let i = 0; i < depth; i++) {
+        const nxt = [];
+        frontier.forEach(n => (adj[n] || []).forEach(m => { if (!visited.has(m)) { visited.add(m); nxt.push(m); } }));
+        frontier = nxt;
+      }
+      return visited;
+    }
+
+    function selectNode(nk) {
+      selectedKey = nk;
+      highlightSet = neighborSet(nk, Number(depthSel.value) || 2);
+      if (vpEl) applyHighlight();
+      renderDetail(nk);
+    }
+
+    function nodeById(t, id) { return graphData.nodes.find(n => n.type === t && n.id === id); }
+    function otherName(e, outgoing) {
+      const n = outgoing ? nodeById(e.target_type, e.target_id) : nodeById(e.source_type, e.source_id);
+      return n ? ((n.name || n.code || "") + " (" + nodeLabel(n.type) + ")") : ((outgoing ? e.target_type : e.source_type) + " #" + (outgoing ? e.target_id : e.source_id));
+    }
+
+    function renderDetail(nk) {
+      detail.textContent = "";
+      const parts = nk.split(":"); const nt = parts[0], nid = Number(parts[1]);
+      const node = nodeById(nt, nid);
+      if (!node) { detail.appendChild(h("p", { class: "cell-sub", text: "Không tìm thấy node." })); return; }
+      detail.appendChild(h("div", { class: "card-title" }, [h("span", { text: (node.name || node.code || "") + " — " + nodeLabel(node.type) }), node.is_simulated ? badge("Mô phỏng", "amber") : null]));
+      if (node.code) detail.appendChild(h("div", { class: "cell-sub", text: "Mã: " + node.code }));
+      const out = graphData.edges.filter(e => e.source_type === nt && e.source_id === nid);
+      const inc = graphData.edges.filter(e => e.target_type === nt && e.target_id === nid);
+      if (!out.length && !inc.length) { detail.appendChild(h("p", { class: "cell-sub", text: "Không có quan hệ nào." })); return; }
+      renderRelGroup(detail, "Đi ra", out, true);
+      renderRelGroup(detail, "Đi vào", inc, false);
+    }
+
+    function renderRelGroup(container, title, edges, outgoing) {
+      if (!edges.length) return;
+      container.appendChild(h("h4", { text: title + " (" + edges.length + ")", style: "margin-top:12px;" }));
+      const ul = h("ul", { class: "path-list" });
+      edges.forEach(e => {
+        const li = h("li", {}, [h("div", {}, [
+          h("span", { class: "hop", text: edgeLabel(e.kind) + (e.label ? " — " + e.label : "") }),
+        ]), h("div", { text: (outgoing ? "→ " : "← ") + otherName(e, outgoing) })]);
+        const actions = h("div", { style: "margin-top:6px;display:flex;gap:8px;" });
+        actions.appendChild(h("button", { class: "btn btn-sm btn-secondary", text: "Sửa", onclick: () => editEdge(e) }));
+        actions.appendChild(h("button", { class: "btn btn-sm btn-ghost", text: "Xóa", onclick: () => deleteEdge(e) }));
+        li.appendChild(actions);
+        ul.appendChild(li);
+      });
+      container.appendChild(ul);
+    }
+
+    function editEdge(e) {
+      const fields = [
+        { name: "label", label: "Mô tả quan hệ" },
+        { name: "description", label: "Ghi chú", type: "textarea" },
+        { name: "source_confirmation", label: "Nguồn xác nhận" },
+        { name: "is_simulated", label: "Dữ liệu mô phỏng", type: "checkbox" },
+      ];
+      const fb = formBuilder(fields, async (data, s) => {
+        fb.setSubmitting(true);
+        try {
+          await api("/api/graph/edges/" + e.id, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) });
+          closeModal(); toast("Đã cập nhật quan hệ."); loadGraph();
+        } catch (err) { toast(err.message, "error"); fb.setSubmitting(false); }
+      }, { label: e.label, description: e.description, source_confirmation: e.source_confirmation, is_simulated: e.is_simulated });
+      openModal("Sửa quan hệ", fb.form);
+    }
+
+    function deleteEdge(e) {
+      if (!confirm("Xóa quan hệ '" + edgeLabel(e.kind) + "'?")) return;
+      api("/api/graph/edges/" + e.id, { method: "DELETE" })
+        .then(() => { toast("Đã xóa."); selectedKey = null; highlightSet = null; loadGraph(); })
+        .catch(err => toast(err.message, "error"));
+    }
+
     async function edgeForm() {
-      const nodeOpts = graphData ? graphData.nodes.map(n => ({ value: n.type + ":" + n.id, label: n.name + " (" + n.type + ")", code: n.type })) : [];
+      const nodeOpts = graphData.nodes.map(n => ({ value: n.type + ":" + n.id, label: (n.name || n.code || "") + " (" + nodeLabel(n.type) + ")", code: n.type }));
       if (!nodeOpts.length) { toast("Chưa có node để liên kết.", "error"); return; }
       const fields = [
         { name: "source", label: "Node nguồn", type: "select", options: nodeOpts, required: true },
         { name: "target", label: "Node đích", type: "select", options: nodeOpts, required: true },
-        { name: "kind", label: "Loại quan hệ", type: "select", options: Object.keys(kinds).map(k => ({ value: k, label: kinds[k][0] })), required: true },
+        { name: "kind", label: "Loại quan hệ", type: "select", options: Object.keys(EDGE_STYLE).map(k => ({ value: k, label: edgeLabel(k) })), required: true },
         { name: "label", label: "Mô tả quan hệ" },
       ];
       const fb = formBuilder(fields, async (data, s) => {
@@ -1254,49 +1661,43 @@
       });
       openModal("Thêm quan hệ", fb.form);
     }
-    modeSel.addEventListener("change", draw);
-    depthSel.addEventListener("change", draw);
-    let t; search.addEventListener("input", () => { clearTimeout(t); t = setTimeout(draw, 300); });
+
+    let searchTerm = "";
+    modeSel.addEventListener("change", () => { impactNodes = {}; impactEdges = new Set(); selectedKey = null; highlightSet = null; draw(); });
+    depthSel.addEventListener("change", () => { if (selectedKey) { highlightSet = neighborSet(selectedKey, Number(depthSel.value) || 2); if (vpEl) applyHighlight(); } });
+    incSel.addEventListener("change", loadImpact);
+    let t; search.addEventListener("input", () => { clearTimeout(t); t = setTimeout(() => { searchTerm = search.value.trim().toLowerCase(); updateSearch(); }, 300); });
+
+    function updateSearch() {
+      searchSet = null;
+      if (!searchTerm) { draw(); return; }
+      searchSet = new Set();
+      graphData.nodes.forEach(n => {
+        if ((n.name || "").toLowerCase().includes(searchTerm) || (n.code || "").toLowerCase().includes(searchTerm)) searchSet.add(nkey(n.type, n.id));
+      });
+      draw();
+    }
+
+    async function loadImpact() {
+      const id = incSel.value;
+      impactNodes = {}; impactEdges = new Set();
+      if (!id) { draw(); return; }
+      try {
+        const d = await api("/api/analysis/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ incident_id: Number(id), max_depth: Number(depthSel.value) || 2 }) });
+        if (!ctx.isCurrent()) return;
+        const impacts = d.data.impacts || [];
+        impacts.forEach(imp => { impactNodes[nkey(imp.node_type, imp.node_id)] = { impact_type: imp.impact_type }; });
+        impacts.forEach(imp => {
+          (imp.path || []).forEach(s => { impactEdges.add(s.from_type + ":" + s.from_id + "->" + s.to_type + ":" + s.to_id); });
+        });
+        draw();
+      } catch (e) { if (ctx.isCurrent()) toast(e.message, "error"); }
+    }
+
+    loadIncidents();
     loadGraph();
   }
 
-  function drawGraph(wrap, nodes, edges, onNodeClick) {
-    const byType = {};
-    nodes.forEach(n => { (byType[n.type] = byType[n.type] || []).push(n); });
-    const order = ["department", "machine", "material", "line", "process", "product", "order", "lot", "shift", "source", "dataset", "field"];
-    const types = order.filter(t => byType[t]);
-    const colW = 140, rowH = 74, padX = 70, padY = 40;
-    const pos = {};
-    types.forEach((t, ci) => byType[t].forEach((n, ri) => { pos[n.type + ":" + n.id] = { x: padX + ci * colW, y: padY + ri * rowH }; }));
-    const W = padX * 2 + types.length * colW;
-    const H = padY * 2 + Math.max.apply(null, types.map(t => byType[t].length), [1]) * rowH;
-    const svg = hNS("svg", { class: "graph-svg", width: W, height: H });
-    edges.forEach(e => {
-      const a = pos[e.source_type + ":" + e.source_id], b = pos[e.target_type + ":" + e.target_id];
-      if (!a || !b) return;
-      const kindCls = { production_dependency: "prod", data_flow: "data", data_mapping: "map", department_responsibility: "dept" }[e.kind] || "";
-      const line = hNS("line", { class: "edge-line " + kindCls, x1: a.x + 60, y1: a.y + 22, x2: b.x + 60, y2: b.y + 22 });
-      line.setAttribute("marker-end", "url(#arrow)");
-      svg.appendChild(line);
-    });
-    const defs = hNS("defs", {});
-    const marker = hNS("marker", { id: "arrow", viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: "auto" });
-    marker.appendChild(hNS("path", { d: "M0,0 L10,5 L0,10 z", fill: "#8a93a0" }));
-    defs.appendChild(marker); svg.appendChild(defs);
-    nodes.forEach(n => {
-      const p = pos[n.type + ":" + n.id];
-      const g = hNS("g", { class: "node" });
-      const r = hNS("rect", { x: p.x, y: p.y, width: 120, height: 44, rx: 6, fill: n.is_simulated ? "#fff3e0" : "#ffffff", stroke: "#c9ced6" });
-      r.addEventListener("click", () => onNodeClick(n));
-      const t = hNS("text", { x: p.x + 60, y: p.y + 19, "text-anchor": "middle", fill: "#1f2933", "font-weight": "600" });
-      t.textContent = (n.name || "").length > 15 ? (n.name || "").slice(0, 15) + "…" : (n.name || "");
-      const s2 = hNS("text", { x: p.x + 60, y: p.y + 34, "text-anchor": "middle", fill: "#8a93a0" });
-      s2.textContent = n.type;
-      g.appendChild(r); g.appendChild(t); g.appendChild(s2);
-      svg.appendChild(g);
-    });
-    wrap.appendChild(svg);
-  }
   function hNS(tag, attrs) {
     const n = document.createElementNS("http://www.w3.org/2000/svg", tag);
     for (const k in attrs) n.setAttribute(k, attrs[k]);
@@ -1305,6 +1706,7 @@
 
   /* ============================================================ analysis */
   async function renderAnalysis(params) {
+    const ctx = activePageCtx;
     const v = $("#view");
     v.textContent = "";
     v.appendChild(h("div", { class: "section-head" }, [h("div", {}, [h("h2", { text: "Phân tích tác động" }), h("div", { class: "desc", text: "Chạy phân tích và đọc kết quả kèm giải thích." })])]));
@@ -1333,7 +1735,7 @@
       const incidents = await api("/api/incidents?page_size=100");
       incOptions = incidents.data.items;
     } catch (e) {
-      if (pageCurrent()) toast(e.message, "error");
+      if (ctx.isCurrent()) toast(e.message, "error");
     }
     incSel.appendChild(h("option", { value: "", text: "-- Chọn sự cố --" }));
     incOptions.forEach(i => incSel.appendChild(h("option", { value: i.id, text: i.code + " — " + i.title })));
@@ -1344,6 +1746,7 @@
     loadHistory();
   }
   function runAnalysis(btn) {
+    const ctx = activePageCtx;
     const incSel = $("#view select[name='incident']");
     const id = incSel.value;
     if (!id) { toast("Chọn một sự cố trước.", "error"); return; }
@@ -1354,8 +1757,12 @@
     const prev = b.textContent;
     b.disabled = true; b.textContent = "Đang chạy...";
     api("/api/analysis/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ incident_id: Number(id), max_depth: Number(maxd), duration_minutes: dur ? Number(dur) : null, rate_per_minute: rate ? Number(rate) : null }) })
-      .then(d => { if (pageCurrent()) renderAnalysisResult(d.data); })
-      .catch(e => { if (pageCurrent()) toast(e.message, "error"); })
+      .then(d => {
+        if (!ctx.isCurrent()) return;
+        renderAnalysisResult(d.data);
+        loadHistory();
+      })
+      .catch(e => { if (ctx.isCurrent()) toast(e.message, "error"); })
       .finally(() => { b.disabled = false; b.textContent = prev; });
   }
   function renderAnalysisResult(r) {
@@ -1458,16 +1865,21 @@
     try {
       const payload = { analysis_action_id: a.id, title: a.action, department_id: a.department_id || null, source_analysis_run_id: r.run_id || null, source_incident_id: r.incident_id || null, is_simulated: dataMode === "simulation" };
       const d = await api("/api/tasks/from-action", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-      toast(d.message);
+      const taskId = d.data && d.data.id;
+      toast(d.message + (taskId ? " (#" + taskId + ")" : ""));
+      if (taskId) {
+        if (window.confirm("Đã tạo công việc #" + taskId + ". Mở danh sách công việc?")) navigate("tasks");
+      }
     } catch (e) { toast(e.message, "error"); }
   }
   async function loadHistory() {
+    const ctx = activePageCtx;
     const wrap = $("#analysis-history");
     if (!wrap) return;
     wrap.textContent = ""; wrap.appendChild(h("div", { class: "card-title" }, [h("span", { text: "Lịch sử phân tích" })]));
     try {
       const d = await api("/api/analysis/runs?page_size=10");
-      if (!pageCurrent()) return;
+      if (!ctx.isCurrent()) return;
       const list = h("div");
       if (!d.data.items.length) list.appendChild(h("p", { class: "cell-sub", text: "Chưa có lần phân tích nào." }));
       else d.data.items.forEach(r => list.appendChild(h("div", { class: "explain", style: "display:flex;justify-content:space-between;align-items:center;" }, [
@@ -1476,20 +1888,22 @@
       ])));
       wrap.appendChild(list);
     } catch (e) {
-      if (!pageCurrent()) return;
+      if (!ctx.isCurrent()) return;
       wrap.appendChild(h("p", { class: "cell-sub", text: "Không tải được lịch sử phân tích." }));
     }
   }
   async function viewRun(id) {
+    const ctx = activePageCtx;
     try {
       const d = await api("/api/analysis/runs/" + id);
-      if (!pageCurrent()) return;
+      if (!ctx.isCurrent()) return;
       renderAnalysisResult(d.data);
-    } catch (e) { if (pageCurrent()) toast(e.message, "error"); }
+    } catch (e) { if (ctx.isCurrent()) toast(e.message, "error"); }
   }
 
   /* ============================================================ tasks */
   async function renderTasks() {
+    const ctx = activePageCtx;
     const v = $("#view");
     v.textContent = "";
     v.appendChild(h("div", { class: "section-head" }, [h("div", {}, [h("h2", { text: "Công việc theo bộ phận" }), h("div", { class: "desc", text: "Theo dõi việc cần làm của từng bộ phận." })])]));
@@ -1514,7 +1928,7 @@
         if (deptSel.value) q.set("department_id", deptSel.value);
         if (statusSel.value) q.set("status", statusSel.value);
         const d = await api("/api/tasks?" + q);
-        if (!pageCurrent() || mySeq !== loadSeq) return;
+        if (!ctx.isCurrent() || mySeq !== loadSeq) return;
         listWrap.textContent = "";
         pag.textContent = "";
         if (!d.data.items.length) {
@@ -1534,14 +1948,16 @@
           h("option", { value: "DISMISSED", selected: row.status === "DISMISSED", text: "Bỏ qua" }),
         ])]));
         st.tp = d.data.pagination.total_pages; pagination(pag, st.page, st.tp, (p) => { st.page = p; load(); });
-      } catch (e) { if (!pageCurrent() || mySeq !== loadSeq) return; listWrap.textContent = ""; listWrap.appendChild(errorBox(e.message, load)); }
+      } catch (e) { if (!ctx.isCurrent() || mySeq !== loadSeq) return; listWrap.textContent = ""; listWrap.appendChild(errorBox(e.message, load)); }
     }
     async function setStatus(row, sel) {
+      sel.disabled = true;
       try {
         await api("/api/tasks/" + row.id + "/status", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: sel.value }) });
         toast("Đã cập nhật."); load();
       } catch (e) {
         sel.value = row.status;
+        sel.disabled = false;
         toast(e.message, "error");
       }
     }
@@ -1567,6 +1983,7 @@
 
   /* ============================================================ scenarios */
   async function renderScenarios() {
+    const ctx = activePageCtx;
     const v = $("#view");
     v.textContent = "";
     v.appendChild(h("div", { class: "section-head" }, [h("div", {}, [h("h2", { text: "Kịch bản mô phỏng" }), h("div", { class: "desc", text: "Thử 3 tình huống với dữ liệu mô phỏng (tách khỏi dữ liệu vận hành)." })])]));
@@ -1580,7 +1997,7 @@
     card.appendChild(toolbar);
     const list = h("div", { class: "grid grid-3" });
     const info = await api("/api/scenarios");
-    if (!pageCurrent()) return;
+    if (!ctx.isCurrent()) return;
     info.data.forEach(s => list.appendChild(h("div", { class: "card" }, [
       h("div", { class: "card-title" }, [h("span", { text: s.title.replace(/^Kịch bản \d: /, "") }), badge("Mô phỏng", "amber")]),
       h("p", { class: "cell-sub", text: "Sự cố: " + s.incident_code }),
@@ -1590,7 +2007,7 @@
     ])));
     card.appendChild(list);
     const status = await api("/api/scenarios/status");
-    if (!pageCurrent()) return;
+    if (!ctx.isCurrent()) return;
     st.textContent = status.data.loaded ? "Đã nạp." : "Chưa nạp.";
   }
   async function loadDemo() {
@@ -1606,13 +2023,14 @@
 
   /* ============================================================ survey */
   async function renderSurvey() {
+    const ctx = activePageCtx;
     const v = $("#view");
     v.textContent = "";
     v.appendChild(h("div", { class: "section-head" }, [h("div", {}, [h("h2", { text: "Khảo sát & xác nhận" }), h("div", { class: "desc", text: "Theo dõi các thông tin cần xác nhận với nhà máy." })])]));
     const groups = await api("/api/survey/groups");
-    if (!pageCurrent()) return;
+    if (!ctx.isCurrent()) return;
     const items = await api("/api/survey");
-    if (!pageCurrent()) return;
+    if (!ctx.isCurrent()) return;
     const byGroup = {};
     items.data.forEach(i => { (byGroup[i.group_code] = byGroup[i.group_code] || []).push(i); });
     groups.data.forEach(g => {
@@ -1647,6 +2065,7 @@
 
   /* ============================================================ users (admin) */
   async function renderUsers() {
+    const ctx = activePageCtx;
     const v = $("#view");
     v.textContent = "";
     v.appendChild(h("div", { class: "section-head" }, [h("div", {}, [h("h2", { text: "Tài khoản & quyền" }), h("div", { class: "desc", text: "Quản lý tài khoản local và vai trò. Mật khẩu được băm; không lưu dạng văn bản." })])]));
@@ -1660,7 +2079,7 @@
       listWrap.textContent = ""; listWrap.appendChild(spinner());
       try {
         const d = await api("/api/auth/users");
-        if (!pageCurrent()) return;
+        if (!ctx.isCurrent()) return;
         listWrap.textContent = "";
         if (!d.data.length) { listWrap.appendChild(emptyBox("users", "Chưa có tài khoản", "Tạo tài khoản đầu tiên bằng script hoặc nút bên dưới.")); return; }
         renderTable(listWrap, [
@@ -1700,12 +2119,13 @@
   const pageState = {};
   let dataMode = localStorage.getItem("d3.mode") || "operations";
   async function renderDashboard() {
+    const ctx = activePageCtx;
     const v = $("#view");
     v.textContent = "";
     v.appendChild(spinner());
     let d;
-    try { d = await api("/api/dashboard?simulated=" + (dataMode === "simulation")); } catch (e) { if (!pageCurrent()) return; v.textContent = ""; v.appendChild(errorBox(e.message, renderDashboard)); return; }
-    if (!pageCurrent()) return;
+    try { d = await api("/api/dashboard?simulated=" + (dataMode === "simulation")); } catch (e) { if (!ctx.isCurrent()) return; v.textContent = ""; v.appendChild(errorBox(e.message, renderDashboard)); return; }
+    if (!ctx.isCurrent()) return;
     v.textContent = "";
     const s = d.data;
 
@@ -1913,6 +2333,7 @@
 
   function navigate(path) {
     if (currentHash() === path) return;
+    if (modalDirty && !window.confirm("Có thay đổi chưa lưu trong form. Bỏ thay đổi và chuyển trang?")) return;
     location.hash = "#/" + path;
   }
 
@@ -1940,7 +2361,8 @@
     $$(".nav-item").forEach(a => a.classList.toggle("active", a.dataset.route === route));
     $("#sidebar").classList.remove("open");
     removeBackdrop();
-    activeRenderToken = ++renderToken;
+    activePageCtx = createPageContext();
+    const pageCtx = activePageCtx;
     const v = $("#view");
     v.textContent = ""; v.appendChild(spinner());
     if (!cfg) { renderNotFound(); return; }
@@ -1949,14 +2371,14 @@
       const result = cfg.render({ parts, params });
       if (result && typeof result.then === "function") {
         result.catch((err) => {
-          if (!pageCurrent()) return;
+          if (!pageCtx.isCurrent()) return;
           if (err && err.status === 401) return;
           v.textContent = "";
           v.appendChild(errorBox((err && err.message) || "Không tải được trang.", () => renderRoute()));
         });
       }
     } catch (err) {
-      if (!pageCurrent()) return;
+      if (!pageCtx.isCurrent()) return;
       v.textContent = "";
       v.appendChild(errorBox((err && err.message) || "Lỗi khi hiển thị trang.", () => renderRoute()));
     }
@@ -1966,7 +2388,14 @@
   $("#nav-toggle").addEventListener("click", () => { $("#sidebar").classList.toggle("open"); toggleBackdrop(); });
   $("#collapse-toggle").addEventListener("click", () => { document.body.classList.toggle("sidebar-collapsed"); });
   $("#header-record").addEventListener("click", () => navigate("operations"));
-  $("#header-incident").addEventListener("click", () => navigate("incidents?new=1"));
+  $("#header-incident").addEventListener("click", () => {
+    const { parts } = parseHash();
+    if (parts[0] === "incidents" && !parts[1] && incidentFormOpener) {
+      incidentFormOpener();
+    } else {
+      navigate("incidents?new=1");
+    }
+  });
   function setMode(mode) {
     dataMode = mode; localStorage.setItem("d3.mode", mode);
     $$(".mode-btn").forEach(b => b.classList.toggle("active", b.dataset.mode === mode));
@@ -1990,5 +2419,11 @@
   function removeBackdrop() { const bd = $(".sidebar-backdrop"); if (bd) bd.remove(); }
 
   window.addEventListener("hashchange", renderRoute);
+  window.addEventListener("beforeunload", (e) => {
+    if (modalDirty) {
+      e.preventDefault();
+      e.returnValue = "";
+    }
+  });
   initAuth();
 })();

@@ -4,6 +4,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query
 
+from app.schemas import DowntimeClose, DowntimeCreate, MachineStateCreate, MaterialCreate, QcCreate, ReportMachineError
 from app.services.operations_service import OperationsService
 from app.settings import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 
@@ -34,8 +35,8 @@ def list_states(page: int = Query(1, ge=1),     page_size: int = Query(DEFAULT_P
 
 
 @router.post("/machine-states", status_code=201)
-def create_state(payload: dict, service: OperationsService = Depends(get_service)):
-    return {"success": True, "message": "Đã ghi nhận.", "data": service.create_state(payload)}
+def create_state(payload: MachineStateCreate, service: OperationsService = Depends(get_service)):
+    return {"success": True, "message": "Đã ghi nhận.", "data": service.create_state(payload.model_dump())}
 
 
 @router.get("/downtimes")
@@ -47,19 +48,19 @@ def list_downtimes(page: int = Query(1, ge=1),     page_size: int = Query(DEFAUL
 
 
 @router.post("/downtimes", status_code=201)
-def create_downtime(payload: dict, service: OperationsService = Depends(get_service)):
-    return {"success": True, "message": "Đã ghi nhận.", "data": service.create_downtime(payload)}
+def create_downtime(payload: DowntimeCreate, service: OperationsService = Depends(get_service)):
+    return {"success": True, "message": "Đã ghi nhận.", "data": service.create_downtime(payload.model_dump())}
 
 
 @router.post("/report-machine-error", status_code=201)
-def report_machine_error(payload: dict, service: OperationsService = Depends(get_service)):
+def report_machine_error(payload: ReportMachineError, service: OperationsService = Depends(get_service)):
     return {"success": True, "message": "Đã ghi nhận sự cố máy.",
-            "data": service.report_machine_error(payload)}
+            "data": service.report_machine_error(payload.model_dump())}
 
 
 @router.post("/downtimes/{downtime_id}/close")
-def close_downtime(downtime_id: int, payload: dict, service: OperationsService = Depends(get_service)):
-    return {"success": True, "message": "Đã đóng.", "data": service.close_downtime(downtime_id, payload.get("end_time"))}
+def close_downtime(downtime_id: int, payload: DowntimeClose, service: OperationsService = Depends(get_service)):
+    return {"success": True, "message": "Đã đóng.", "data": service.close_downtime(downtime_id, payload.end_time)}
 
 
 @router.get("/qc")
@@ -71,8 +72,8 @@ def list_qc(page: int = Query(1, ge=1),     page_size: int = Query(DEFAULT_PAGE_
 
 
 @router.post("/qc", status_code=201)
-def create_qc(payload: dict, service: OperationsService = Depends(get_service)):
-    return {"success": True, "message": "Đã ghi nhận.", "data": service.create_qc(payload)}
+def create_qc(payload: QcCreate, service: OperationsService = Depends(get_service)):
+    return {"success": True, "message": "Đã ghi nhận.", "data": service.create_qc(payload.model_dump())}
 
 
 @router.get("/material")
@@ -84,5 +85,5 @@ def list_material(page: int = Query(1, ge=1),     page_size: int = Query(DEFAULT
 
 
 @router.post("/material", status_code=201)
-def create_material(payload: dict, service: OperationsService = Depends(get_service)):
-    return {"success": True, "message": "Đã ghi nhận.", "data": service.create_material(payload)}
+def create_material(payload: MaterialCreate, service: OperationsService = Depends(get_service)):
+    return {"success": True, "message": "Đã ghi nhận.", "data": service.create_material(payload.model_dump())}

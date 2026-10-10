@@ -1,5 +1,7 @@
 """Kiểm thử engine phân tích tác động (thuần, không cần database)."""
 
+from datetime import datetime, timezone
+
 from app.engine.impact_engine import evaluate_condition, select_hypotheses, traverse
 
 
@@ -75,6 +77,24 @@ def test_responsibility_edge_does_not_become_impact():
     impacts = traverse(edges, "machine", 1, {"production_dependency"}, 5)
     # Cạnh trách nhiệm bộ phận dùng để xác định bộ phận liên quan, không phải ảnh hưởng.
     assert all(i["node_type"] != "department" for i in impacts)
+
+
+def test_traverse_skips_expired_edges():
+    t0 = datetime(2026, 10, 6, 10, 0, tzinfo=timezone.utc)
+    edges = [
+        _edge("machine", 1, "process", 1),  # không có thời gian -> còn hiệu lực
+        {"source_type": "process", "source_id": 1, "target_type": "process", "target_id": 2,
+         "kind": "production_dependency", "label": "",
+         "valid_to": datetime(2026, 10, 1, 0, 0, tzinfo=timezone.utc)},  # đã hết hiệu lực
+        {"source_type": "process", "source_id": 1, "target_type": "product", "target_id": 1,
+         "kind": "production_dependency", "label": "",
+         "valid_from": datetime(2026, 11, 1, 0, 0, tzinfo=timezone.utc)},  # chưa tới hiệu lực
+    ]
+    impacts = traverse(edges, "machine", 1, {"production_dependency"}, 5, at_time=t0)
+    nodes = {(i["node_type"], i["node_id"]) for i in impacts}
+    assert ("process", 1) in nodes
+    assert ("process", 2) not in nodes
+    assert ("product", 1) not in nodes
 
 
 def test_evaluate_condition_operators():

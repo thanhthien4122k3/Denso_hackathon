@@ -136,6 +136,15 @@ class IncidentRepository:
         return row
 
     @_db_errors
+    def get_cause(self, cause_id):
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM production.incident_causes WHERE id = %(id)s",
+                {"id": cause_id},
+            )
+            return cur.fetchone()
+
+    @_db_errors
     def update_cause(self, cause_id, data):
         cols = ["content", "kind", "evidence", "rule_id", "priority", "confirmed_by", "confirmed_at"]
         cols = [c for c in cols if c in data]

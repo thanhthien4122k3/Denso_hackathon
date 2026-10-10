@@ -102,10 +102,20 @@ def create_cause(incident_id: int, payload: dict, request: Request,
 @router.put("/causes/{cause_id}")
 def update_cause(cause_id: int, payload: dict, request: Request,
                  service: IncidentService = Depends(get_service),
-                 user: dict = Depends(current_user)):
-    if payload.get("kind") == "CONFIRMED":
+                 user: dict = Depends(current_user),
+                 ctx: ContextRepository = Depends(get_context_repo)):
+    current = service.get_cause(cause_id)
+    if current is None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy nguyên nhân.")
+    # Cần quyền khi sửa nguyên nhân đã xác nhận (kể cả không gửi trường kind)
+    # hoặc khi xác nhận một nguyên nhân mới.
+    if current.get("kind") == "CONFIRMED" or payload.get("kind") == "CONFIRMED":
         _require_role(request, ("COORDINATOR",))
-    return {"success": True, "message": "Đã cập nhật.", "data": service.update_cause(cause_id, payload, user=user)}
+    row = service.update_cause(cause_id, payload, user=user)
+    ctx.add_history(current["incident_id"], "CAUSE_UPDATED", user["username"],
+                    {"cause_id": cause_id, "kind": payload.get("kind", current.get("kind")),
+                     "content": payload.get("content")})
+    return {"success": True, "message": "Đã cập nhật.", "data": row}
 
 
 @router.delete("/causes/{cause_id}")
@@ -113,6 +123,9 @@ def delete_cause(cause_id: int, request: Request,
                  service: IncidentService = Depends(get_service),
                  user: dict = Depends(current_user)):
     _require_role(request, ("COORDINATOR",))
+    current = service.get_cause(cause_id)
+    if current is None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy nguyên nhân.")
     service.delete_cause(cause_id)
     return {"success": True, "message": "Đã xóa.", "data": None}
 

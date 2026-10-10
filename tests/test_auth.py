@@ -220,3 +220,56 @@ def test_analysis_max_depth_bounds(client):
         "incident_id": 1, "max_depth": 0}).status_code == 422
     assert client.post("/api/analysis/run", json={
         "incident_id": 1, "max_depth": "abc"}).status_code == 422
+
+
+def test_operator_cannot_edit_confirmed_cause_without_kind(client):
+    _create_user("coord6", ["COORDINATOR"])
+    _create_user("rec9", ["OPERATOR"])
+    coord = _client_for("coord6")
+    op = _client_for("rec9")
+    iid = _incident(coord, "INC-C7", "550e8400-e29b-41d4-a716-446655440012")
+    c = coord.post(f"/api/incidents/{iid}/causes", json={
+        "content": "nguyên nhân đã xác nhận", "kind": "CONFIRMED",
+        "evidence": "Bằng chứng từ nhật ký máy"})
+    assert c.status_code == 201
+    cause_id = c.json()["data"]["id"]
+    # Operator sửa nội dung nguyên nhân CONFIRMED mà KHÔNG gửi trường kind.
+    assert op.put(f"/api/incidents/causes/{cause_id}", json={
+        "content": "đổi trộm"}).status_code == 403
+    coord.close(); op.close()
+
+
+def test_update_cause_missing_404(client):
+    assert client.put("/api/incidents/causes/99999999", json={
+        "content": "x"}).status_code == 404
+
+
+def test_recover_closed_incident_conflict(client):
+    _create_user("coord7", ["COORDINATOR"])
+    tc = _client_for("coord7")
+    iid = _incident(tc, "INC-C8", "550e8400-e29b-41d4-a716-446655440013",
+                    start_time="2026-10-06T10:00:00+07:00")
+    assert tc.post(f"/api/incidents/{iid}/recover", json={
+        "recovered_at": "2026-10-06T10:12:00+07:00"}).status_code == 200
+    assert tc.post(f"/api/incidents/{iid}/close", json={
+        "resolution_summary": "Đã xử lý xong"}).status_code == 200
+    # Khôi phục hồ sơ đã đóng phải bị từ chối (409).
+    assert tc.post(f"/api/incidents/{iid}/recover", json={
+        "recovered_at": "2026-10-06T10:15:00+07:00"}).status_code == 409
+    tc.close()
+
+
+def test_generic_update_cannot_close_or_set_lifecycle(client):
+    _create_user("coord8", ["COORDINATOR"])
+    tc = _client_for("coord8")
+    iid = _incident(tc, "INC-C9", "550e8400-e29b-41d4-a716-446655440014",
+                    start_time="2026-10-06T10:00:00+07:00")
+    # Đóng hồ sơ qua endpoint chung bị từ chối.
+    assert tc.put(f"/api/incidents/{iid}", json={
+        "status": "RESOLVED"}).status_code == 422
+    # Sửa trường vòng đời qua endpoint chung bị bỏ qua (không được đổi closed_at).
+    r = tc.put(f"/api/incidents/{iid}", json={
+        "title": "Đổi tiêu đề", "closed_at": "2026-10-06T11:00:00+07:00"})
+    assert r.status_code == 200
+    assert r.json()["data"].get("closed_at") is None
+    tc.close()

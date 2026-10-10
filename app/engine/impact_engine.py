@@ -1,7 +1,8 @@
 """Engine phân tích tác động theo đồ thị và quy tắc (không dùng ML).
 
-Duyệt đồ thị có visited set để tránh lặp vô hạn khi có chu trình. Không cộng lặp
-ảnh hưởng: mỗi node chỉ ghi nhận một lần theo mức ảnh hưởng mạnh nhất.
+Duyệt đồ thị theo chiều rộng (BFS) có visited set để tránh lặp vô hạn khi có
+chu trình. Mỗi node chỉ ghi nhận một lần theo đường đến đầu tiên (đường ngắn
+nhất); các đường dài hơn tới cùng một node bị bỏ qua.
 """
 
 from collections import defaultdict, deque
@@ -14,12 +15,26 @@ def build_adjacency(edges: list[dict]) -> dict:
     return adj
 
 
+def _edge_active(edge: dict, at_time) -> bool:
+    """Cạnh còn hiệu lực tại thời điểm at_time (None = không lọc theo thời gian)."""
+    if at_time is None:
+        return True
+    valid_from = edge.get("valid_from")
+    valid_to = edge.get("valid_to")
+    if valid_from is not None and valid_from > at_time:
+        return False
+    if valid_to is not None and valid_to < at_time:
+        return False
+    return True
+
+
 def traverse(
     edges: list[dict],
     source_type: str,
     source_id: int,
     propagate_kinds: set,
     max_depth: int,
+    at_time=None,
 ) -> list[dict]:
     adj = build_adjacency(edges)
     visited = {(source_type, source_id)}
@@ -33,6 +48,8 @@ def traverse(
             continue
         for edge in adj.get((node_type, node_id), []):
             if edge["kind"] not in propagate_kinds:
+                continue
+            if not _edge_active(edge, at_time):
                 continue
             ntype, nid = edge["target_type"], edge["target_id"]
             if (ntype, nid) in visited:

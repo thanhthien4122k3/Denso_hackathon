@@ -80,8 +80,13 @@ class ContextRepository:
         return rows[0] if len(rows) == 1 else None
 
     @_db_errors
-    def active_operations(self, machine_id, at_time):
+    def active_operations(self, machine_id, at_time, is_simulated=None):
         """TẤT CẢ bối cảnh phù hợp (không dùng LIMIT 1 — không che giấu nhiều kết quả)."""
+        params = {"machine_id": machine_id, "at": at_time}
+        scope = ""
+        if is_simulated is not None:
+            scope = "AND po.is_simulated = %(is_simulated)s"
+            params["is_simulated"] = is_simulated
         with self._conn() as conn, conn.cursor() as cur:
             cur.execute(
                 "SELECT po.*, l.code AS lot_code, l.name AS lot_name, "
@@ -96,8 +101,9 @@ class ContextRepository:
                 "WHERE po.machine_id = %(machine_id)s "
                 "AND po.started_at <= %(at)s "
                 "AND (po.ended_at IS NULL OR po.ended_at > %(at)s) "
-                "ORDER BY po.started_at",
-                {"machine_id": machine_id, "at": at_time},
+                + scope +
+                " ORDER BY po.started_at",
+                params,
             )
             return cur.fetchall()
 
@@ -184,15 +190,21 @@ class ContextRepository:
         return row
 
     @_db_errors
-    def buffer_between(self, upstream_process_id, downstream_process_id, at_time):
+    def buffer_between(self, upstream_process_id, downstream_process_id, at_time, is_simulated=None):
         """Lượng hàng đệm gần nhất (theo recorded_at <= at_time) giữa hai công đoạn."""
+        params = {"up": upstream_process_id, "down": downstream_process_id, "at": at_time}
+        scope = ""
+        if is_simulated is not None:
+            scope = "AND is_simulated = %(is_simulated)s"
+            params["is_simulated"] = is_simulated
         with self._conn() as conn, conn.cursor() as cur:
             cur.execute(
                 "SELECT * FROM production.buffer_snapshots "
                 "WHERE upstream_process_id = %(up)s AND downstream_process_id = %(down)s "
                 "AND recorded_at <= %(at)s "
-                "ORDER BY recorded_at DESC LIMIT 1",
-                {"up": upstream_process_id, "down": downstream_process_id, "at": at_time},
+                + scope +
+                " ORDER BY recorded_at DESC LIMIT 1",
+                params,
             )
             return cur.fetchone()
 
@@ -227,7 +239,13 @@ class ContextRepository:
         return row
 
     @_db_errors
-    def capacity_for(self, process_id, machine_id, product_id, at_time):
+    def capacity_for(self, process_id, machine_id, product_id, at_time, is_simulated=None):
+        params = {"process_id": process_id, "machine_id": machine_id,
+                  "product_id": product_id, "at": at_time}
+        scope = ""
+        if is_simulated is not None:
+            scope = "AND is_simulated = %(is_simulated)s"
+            params["is_simulated"] = is_simulated
         with self._conn() as conn, conn.cursor() as cur:
             cur.execute(
                 "SELECT * FROM production.capacity_profiles "
@@ -235,9 +253,9 @@ class ContextRepository:
                 "AND (%(machine_id)s::bigint IS NULL OR machine_id = %(machine_id)s) "
                 "AND (%(product_id)s::bigint IS NULL OR product_id = %(product_id)s) "
                 "AND valid_from <= %(at)s AND (valid_to IS NULL OR valid_to >= %(at)s) "
-                "ORDER BY id DESC LIMIT 1",
-                {"process_id": process_id, "machine_id": machine_id,
-                 "product_id": product_id, "at": at_time},
+                + scope +
+                " ORDER BY id DESC LIMIT 1",
+                params,
             )
             return cur.fetchone()
 

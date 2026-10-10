@@ -75,6 +75,38 @@ def test_graph_edge_validation(demo):
     assert resp.status_code == 422  # data_mapping không hợp lệ giữa 2 node nghiệp vụ
 
 
+def test_graph_edge_self_loop_rejected(demo):
+    resp = demo.post("/api/graph/edges", json={
+        "source_type": "process", "source_id": 1,
+        "target_type": "process", "target_id": 1,
+        "kind": "production_dependency",
+    })
+    assert resp.status_code == 422
+    assert "tự nối" in resp.json()["message"]
+
+
+def test_graph_edge_duplicate_conflict(demo):
+    d = demo.get("/api/graph/map").json()["data"]
+
+    def node_id(ntype, code):
+        for n in d["nodes"]:
+            if n["type"] == ntype and n["code"] == code:
+                return n["id"]
+        return None
+
+    p1 = node_id("process", "ASSY-01")
+    p2 = node_id("process", "TEST-01")
+    payload = {
+        "source_type": "process", "source_id": p2, "target_type": "process",
+        "target_id": p1, "kind": "production_dependency",
+    }
+    first = demo.post("/api/graph/edges", json=payload)
+    assert first.status_code == 201
+    second = demo.post("/api/graph/edges", json=payload)
+    assert second.status_code == 409
+    assert "tồn tại" in second.json()["message"]
+
+
 def test_incident_idempotent_create(demo):
     payload = {"code": "INC-TST", "title": "Test", "incident_type": "OTHER",
                "request_id": "550e8400-e29b-41d4-a716-446655440000"}

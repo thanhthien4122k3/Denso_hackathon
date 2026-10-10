@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 from uuid import UUID
 
-from app.exceptions import DuplicateCodeError, NotFoundError, ValidationFailedError
+from app.exceptions import ConflictError, DuplicateCodeError, NotFoundError, RecordConflictError, ValidationFailedError
 from app.graph import NODE_TYPES
 from app.repositories.catalog_repository import CatalogRepository
 from app.repositories.graph_repository import GraphRepository
@@ -20,12 +20,17 @@ def _dt(value):
     if value is None or value == "":
         return None
     if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
         return value
     if isinstance(value, str):
         try:
-            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
         except ValueError:
             raise ValidationFailedError("Thời gian không hợp lệ.") from None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed
     raise ValidationFailedError("Thời gian không hợp lệ.")
 
 
@@ -101,28 +106,40 @@ class IncidentService:
         cleaned = self._clean(data)
         existing = self.repository.get_by_request_id(cleaned["request_id"])
         if existing is not None:
-            return existing, False
+            if self._matches(existing, cleaned):
+                return existing, False
+            raise RecordConflictError("Cùng request_id nhưng nội dung khác nhau.")
         try:
             row = self.repository.create(cleaned)
         except DuplicateCodeError:
             existing = self.repository.get_by_request_id(cleaned["request_id"])
             if existing is not None:
-                return existing, False
+                if self._matches(existing, cleaned):
+                    return existing, False
+                raise RecordConflictError("Cùng request_id nhưng nội dung khác nhau.")
             raise
         return row, True
+
+    @staticmethod
+    def _matches(existing: dict, incoming: dict) -> bool:
+        fields = (
+            "code", "title", "incident_type", "source_object_type", "source_object_id",
+            "start_time", "end_time", "severity", "description", "status",
+            "assigned_department_id", "is_simulated",
+        )
+        return all(existing.get(f) == incoming.get(f) for f in fields)
 
     def update(self, incident_id, data):
         if self.repository.get(incident_id) is None:
             raise NotFoundError("Sự cố không tồn tại.")
         # Chỉ cho phép cập nhật một số trường, không đổi code/request_id.
+        # Trường vòng đời (khôi phục/đóng) chỉ được sửa qua recover/close.
         allowed = {}
         mapping = {
             "title": "str", "incident_type": "enum_type", "source_object_type": "str",
             "source_object_id": "int", "start_time": "dt", "end_time": "dt",
             "severity": "enum_sev", "status": "enum_status", "description": "str",
-            "assigned_department_id": "int", "recovered_at": "dt",
-            "closed_at": "dt", "resolution_summary": "str",
-            "root_cause_status": "enum_rcs",
+            "assigned_department_id": "int",
         }
         for field, ftype in mapping.items():
             if field not in data:
@@ -132,10 +149,11 @@ class IncidentService:
                 raise ValidationFailedError(f"incident_type phải thuộc {sorted(INCIDENT_TYPES)}.")
             if field == "severity" and value not in SEVERITIES:
                 raise ValidationFailedError(f"severity phải thuộc {sorted(SEVERITIES)}.")
-            if field == "status" and value not in STATUSES:
-                raise ValidationFailedError(f"status phải thuộc {sorted(STATUSES)}.")
-            if field == "root_cause_status" and value not in ("UNKNOWN", "HYPOTHESIS", "CONFIRMED"):
-                raise ValidationFailedError("root_cause_status phải là UNKNOWN/HYPOTHESIS/CONFIRMED.")
+            if field == "status":
+                if value not in STATUSES:
+                    raise ValidationFailedError(f"status phải thuộc {sorted(STATUSES)}.")
+                if value == "RESOLVED":
+                    raise ValidationFailedError("Đóng hồ sơ phải dùng hành động đóng riêng.")
             if ftype == "dt":
                 value = _dt(value)
             elif ftype == "int" and (isinstance(value, bool) or not isinstance(value, int)):
@@ -184,7 +202,13 @@ class IncidentService:
     def list_causes(self, incident_id):
         return self.repository.list_causes(incident_id)
 
+    def get_cause(self, cause_id):
+        return self.repository.get_cause(cause_id)
+
     def update_cause(self, cause_id, data, user=None):
+        current = self.repository.get_cause(cause_id)
+        if current is None:
+            raise NotFoundError("Nguyên nhân không tồn tại.")
         cleaned = {}
         if "content" in data:
             cleaned["content"] = (data.get("content") or "").strip() or None
@@ -199,13 +223,22 @@ class IncidentService:
             cleaned["rule_id"] = (data.get("rule_id") or "").strip() or None
         if "priority" in data:
             cleaned["priority"] = (data.get("priority") or "").strip() or None
-        # Không cho client giả mạo người xác nhận/thời điểm xác nhận.
-        if cleaned.get("kind") == "CONFIRMED":
-            cleaned["confirmed_by"] = user["username"] if user else None
+
+        becomes_confirmed = cleaned.get("kind") == "CONFIRMED" or (
+            current.get("kind") == "CONFIRMED" and "kind" not in cleaned
+        )
+        if becomes_confirmed:
+            evidence = cleaned.get("evidence") if "evidence" in cleaned else current.get("evidence")
+            if not evidence:
+                raise ValidationFailedError("Xác nhận nguyên nhân cần có bằng chứng.")
+            cleaned["confirmed_by"] = user["username"] if user else current.get("confirmed_by")
             cleaned["confirmed_at"] = datetime.now(timezone.utc)
-        elif "kind" in data and data["kind"] != "CONFIRMED":
+        elif "kind" in cleaned and cleaned["kind"] != "CONFIRMED" and current.get("kind") == "CONFIRMED":
+            # Hạ trạng thái nguyên nhân đã xác nhận.
             cleaned["confirmed_by"] = None
             cleaned["confirmed_at"] = None
+        if not cleaned:
+            return current
         return self.repository.update_cause(cause_id, cleaned)
 
     def delete_cause(self, cause_id):
@@ -216,6 +249,8 @@ class IncidentService:
         incident = self.repository.get(incident_id)
         if incident is None:
             raise NotFoundError("Sự cố không tồn tại.")
+        if incident.get("closed_at") is not None or incident.get("status") == "RESOLVED":
+            raise ConflictError("Không thể khôi phục hồ sơ đã đóng.")
         recovered = _dt(recovered_at)
         start = incident.get("start_time")
         if recovered is not None and start is not None and recovered < start:
@@ -233,6 +268,8 @@ class IncidentService:
         summary = (resolution_summary or "").strip()
         if not summary:
             raise ValidationFailedError("Cần nhập tóm tắt kết quả xử lý khi đóng hồ sơ.")
+        if root_cause_status not in ("UNKNOWN", "HYPOTHESIS", "CONFIRMED"):
+            raise ValidationFailedError("root_cause_status phải là UNKNOWN/HYPOTHESIS/CONFIRMED.")
         closed = _dt(closed_at) if closed_at else datetime.now(timezone.utc)
         start = incident.get("start_time")
         if start is not None and closed < start:

@@ -119,7 +119,7 @@ class AnalysisService:
             }
         return result
 
-    def _resolve_context(self, source_type, source_id, at_time, incident_id=None):
+    def _resolve_context(self, source_type, source_id, at_time, incident_id=None, is_simulated=None):
         """Bối cảnh lô–công đoạn–máy tại thời điểm xảy ra lỗi.
 
         Trả trạng thái MATCHED/AMBIGUOUS/NOT_FOUND/CONFIRMED/NEEDS_REVIEW.
@@ -128,7 +128,7 @@ class AnalysisService:
         if source_type != "machine" or not source_id or not at_time:
             return self._ctx_result("NOT_FOUND", [], None,
                                     message="Chưa đủ thông tin để đối chiếu bối cảnh.")
-        ops = self.context.active_operations(source_id, at_time)
+        ops = self.context.active_operations(source_id, at_time, is_simulated=is_simulated)
         candidates = [self._candidate(o) for o in ops]
         if not candidates:
             return self._ctx_result("NOT_FOUND", [], None,
@@ -157,7 +157,7 @@ class AnalysisService:
                 return e["target_id"]
         return None
 
-    def _buffer_estimate(self, context, edges, at_time):
+    def _buffer_estimate(self, context, edges, at_time, is_simulated=None):
         """Ước tính thời điểm công đoạn sau cạn hàng đệm (nếu có dữ liệu)."""
         if not context or not context.get("resolved"):
             return {"available": False, "message": "Chưa đủ dữ liệu để ước tính hàng đệm."}
@@ -165,11 +165,11 @@ class AnalysisService:
         downstream = self._downstream_process(process_id, edges)
         if downstream is None:
             return {"available": False, "message": "Không xác định được công đoạn sau của công đoạn đang xét."}
-        buffer = self.context.buffer_between(process_id, downstream, at_time)
+        buffer = self.context.buffer_between(process_id, downstream, at_time, is_simulated=is_simulated)
         if not buffer:
             return {"available": False,
                     "message": "Chưa có dữ liệu hàng đệm giữa hai công đoạn (không đưa ra thời điểm cụ thể)."}
-        rate = self.context.capacity_for(downstream, None, None, at_time)
+        rate = self.context.capacity_for(downstream, None, None, at_time, is_simulated=is_simulated)
         if not rate or not rate.get("rate_per_minute"):
             return {"available": False,
                     "message": "Chưa có công suất tham chiếu cho công đoạn sau (không đưa ra thời điểm cụ thể)."}
@@ -193,14 +193,14 @@ class AnalysisService:
                            "không có nguồn thay thế. Đây là ước tính, không phải bằng chứng công đoạn sau đã dừng.",
         }
 
-    def _capacity_estimate(self, context, duration_minutes, at_time):
+    def _capacity_estimate(self, context, duration_minutes, at_time, is_simulated=None):
         """Ước tính năng lực gia công có nguy cơ không thực hiện trong khoảng dừng."""
         if not context or not context.get("resolved"):
             return None
         if duration_minutes is None:
             return None
         profile = self.context.capacity_for(context["process_id"], context["machine_id"],
-                                            None, at_time)
+                                            None, at_time, is_simulated=is_simulated)
         if not profile or not profile.get("rate_per_minute"):
             return None
         rpm = float(profile["rate_per_minute"])
@@ -252,6 +252,7 @@ class AnalysisService:
         assumptions: str | None = None,
         at_time=None,
         incident_id: int | None = None,
+        is_simulated: bool = False,
     ) -> dict:
         rules, version = load_rules()
         matched = matching_rules(rules, incident_type)
@@ -287,13 +288,13 @@ class AnalysisService:
         edges = self.graph.all_edges()
         impacts = []
         if source_id is not None:
-            impacts = (edges, source_type, source_id, propagate, max_depth)
+            impacts = traverse(edges, source_type, source_id, propagate, max_depth, at_time)
 
         dept_map = self._department_map()
         rule_assumptions = " ".join(r.get("assumptions", "") for r in matched).strip()
         full_assumptions = " ".join(x for x in (rule_assumptions, assumptions) if x).strip()
 
-        context = self._resolve_context(source_type, source_id, at_time, incident_id)
+        context = self._resolve_context(source_type, source_id, at_time, incident_id, is_simulated)
 
         impact_items = []
         for impact in impacts:
@@ -361,8 +362,8 @@ class AnalysisService:
                     "departments": [],
                 })
 
-        buffer_estimate = self._buffer_estimate(context, edges, at_time) if at_time else None
-        capacity_estimate = self._capacity_estimate(context, duration_minutes, at_time) if at_time else None
+        buffer_estimate = self._buffer_estimate(context, edges, at_time, is_simulated) if at_time else None
+        capacity_estimate = self._capacity_estimate(context, duration_minutes, at_time, is_simulated) if at_time else None
 
         related_past = self._related_past(incident_type, source_type, source_id, error_code)
 
@@ -422,6 +423,7 @@ class AnalysisService:
             assumptions=assumptions,
             at_time=incident.get("start_time"),
             incident_id=incident_id,
+            is_simulated=incident.get("is_simulated", False),
         )
         run = self._save(
             source_type="INCIDENT", source_id=incident_id,
@@ -450,7 +452,7 @@ class AnalysisService:
             incident_type=incident_type, source_type=source_type, source_id=source_id,
             max_depth=max_depth, duration_minutes=duration_minutes,
             rate_per_minute=rate_per_minute, assumptions=assumptions,
-            at_time=at_time,
+            at_time=at_time, is_simulated=True,
         )
         run = self._save(
             source_type="SCENARIO", source_id=source_id,
