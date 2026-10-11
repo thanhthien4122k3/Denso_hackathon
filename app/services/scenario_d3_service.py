@@ -62,6 +62,11 @@ class ScenarioD3Service:
                 "code": machine["code"], "name": machine["name"], "is_simulated": True,
                 "department_id": nid("department", "MAINT"),
             })
+        for material in s.MATERIALS:
+            ids[("material", material["code"])] = ensure("material", {
+                "code": material["code"], "name": material["name"], "is_simulated": True,
+                "unit": material["unit"], "department_id": nid("department", "WH"),
+            })
         for product in s.PRODUCTS:
             ids[("product", product["code"])] = ensure("product", {
                 **product, "is_simulated": True,
@@ -163,13 +168,15 @@ class ScenarioD3Service:
                 "confirmed": ds["confirmed"], "is_simulated": True,
             })
             dataset_ids[ds["code"]] = row["id"]
+        field_ids = {}
         for f in s.DATASET_FIELDS:
-            self.system.create_field({
+            row = self.system.create_field({
                 "dataset_id": dataset_ids[f["dataset_code"]],
                 "code": f["code"], "name": f["name"],
                 "data_type": f["data_type"], "is_key": f["is_key"],
                 "confirmed": False,
             })
+            field_ids[(f["dataset_code"], f["code"])] = row["id"]
         for m in s.MAPPINGS:
             self.context.create_mapping({
                 "source_id": source_ids[m["source_code"]],
@@ -177,6 +184,31 @@ class ScenarioD3Service:
                 "source_code": m["source_code_value"],
                 "node_id": nid(m["object_type"], m["target_code"]),
                 "confirmed": True, "scenario_id": s.SCENARIO_ID, "is_simulated": True,
+            })
+
+        # Cạnh luồng dữ liệu (data_flow) và ánh xạ dữ liệu-nghiệp vụ (data_mapping).
+        for src_type, src_ref, tgt_type, tgt_ref, kind, label in s.DATA_FLOW_EDGES:
+            src_id = source_ids[src_ref] if src_type == "source" else dataset_ids[src_ref]
+            tgt_id = source_ids[tgt_ref] if tgt_type == "source" else dataset_ids[tgt_ref]
+            self.graph.create_edge({
+                "source_type": src_type, "source_id": src_id,
+                "target_type": tgt_type, "target_id": tgt_id,
+                "kind": kind, "label": label,
+                "source_confirmation": "Demo", "is_simulated": True,
+                "valid_from": valid_from,
+            })
+        for src_type, src_ref, tgt_type, tgt_code, kind, label in s.DATA_MAPPING_EDGES:
+            if src_type == "field":
+                ds_code, f_code = src_ref.split(".", 1)
+                src_id = field_ids[(ds_code, f_code)]
+            else:
+                src_id = dataset_ids[src_ref]
+            self.graph.create_edge({
+                "source_type": src_type, "source_id": src_id,
+                "target_type": tgt_type, "target_id": nid(tgt_type, tgt_code),
+                "kind": kind, "label": label,
+                "source_confirmation": "Demo", "is_simulated": True,
+                "valid_from": valid_from,
             })
 
         # Mẫu nhập sai mã (chưa ánh xạ).

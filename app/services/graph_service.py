@@ -85,7 +85,7 @@ class GraphService:
     def list_edges(self, page, page_size, kind, is_simulated):
         return self.repository.list_edges(page, page_size, kind, is_simulated)
 
-    def get_map(self, types=None, center=None, depth=None):
+    def get_map(self, types=None, center=None, depth=None, limit=None):
         nodes = self.repository.list_nodes(types)
         edges = self.repository.all_edges()
         if center and depth:
@@ -95,7 +95,17 @@ class GraphService:
             except (ValueError, AttributeError):
                 raise ValidationFailedError("center phải có dạng 'type:id'.")
             nodes, edges = self._neighborhood(nodes, edges, ctype, cid, depth)
-        return {"nodes": nodes, "edges": edges}
+        limited = False
+        if limit and len(nodes) > limit:
+            limited = True
+            keep = {(n["type"], n["id"]) for n in nodes[:limit]}
+            nodes = nodes[:limit]
+            edges = [
+                e for e in edges
+                if (e["source_type"], e["source_id"]) in keep
+                and (e["target_type"], e["target_id"]) in keep
+            ]
+        return {"nodes": nodes, "edges": edges, "limited": limited}
 
     @staticmethod
     def _neighborhood(nodes, edges, center_type, center_id, depth):
