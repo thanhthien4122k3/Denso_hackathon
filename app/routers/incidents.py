@@ -66,6 +66,15 @@ def get_incident(incident_id: int, service: IncidentService = Depends(get_servic
     return {"success": True, "message": "OK", "data": row}
 
 
+@router.get("/{incident_id}/history")
+def get_history(incident_id: int,
+                service: IncidentService = Depends(get_service),
+                ctx: ContextRepository = Depends(get_context_repo)):
+    if service.get(incident_id) is None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy sự cố.")
+    return {"success": True, "message": "OK", "data": ctx.list_history(incident_id)}
+
+
 @router.put("/{incident_id}")
 def update_incident(incident_id: int, payload: dict,
                     request: Request,

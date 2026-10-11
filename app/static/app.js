@@ -114,9 +114,17 @@
     return "xxxxxxxx-xxxx-4xxx-yxxx-" + String(Date.now()).slice(-12);
   }
 
-  function iso(v) { return v ? new Date(v).toISOString() : null; }
-  function fmt(v) { if (!v) return ""; const d = new Date(v); return isNaN(d) ? String(v) : d.toLocaleString("vi-VN"); }
-  function fmtDate(v) { if (!v) return ""; const d = new Date(v); return isNaN(d) ? String(v) : d.toLocaleDateString("vi-VN"); }
+  // Giá trị datetime-local (không có múi giờ) được hiểu là giờ Việt Nam (+07:00),
+  // bất kể múi giờ của trình duyệt; dữ liệu mẫu theo +07:00.
+  function iso(v) {
+    if (!v) return null;
+    const s = String(v);
+    if (!/(Z|[+-]\d{2}:?\d{2})$/i.test(s)) return new Date(s + "+07:00").toISOString();
+    return new Date(s).toISOString();
+  }
+  const VN_TZ = "Asia/Ho_Chi_Minh";
+  function fmt(v) { if (!v) return ""; const d = new Date(v); return isNaN(d) ? String(v) : d.toLocaleString("vi-VN", { timeZone: VN_TZ }); }
+  function fmtDate(v) { if (!v) return ""; const d = new Date(v); return isNaN(d) ? String(v) : d.toLocaleDateString("vi-VN", { timeZone: VN_TZ }); }
 
   const ICONS = {
     dashboard: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
@@ -137,6 +145,7 @@
     empty: '<path d="M4 8h16v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><path d="M4 8l2-4h12l2 4"/>',
     clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
     database: '<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v7c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/>',
+    matrix: '<rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="3" width="8" height="8" rx="1"/><rect x="3" y="13" width="8" height="8" rx="1"/><rect x="13" y="13" width="8" height="8" rx="1"/>',
   };
   function icon(name, cls) {
     const s = h("span", { class: "icon " + (cls || ""), "aria-hidden": "true" });
@@ -739,7 +748,7 @@
       ];
       const fb = formBuilder(fields, async (data, s) => {
         fb.setSubmitting(true);
-        try { await api("/api/operations/machine-states", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...data, event_time: iso(data.event_time) }) }); closeModal(); toast("Đã ghi nhận."); load(); }
+        try { await api("/api/operations/machine-states", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...data, event_time: iso(data.event_time), is_simulated: dataMode === "simulation" }) }); closeModal(); toast("Đã ghi nhận."); load(); }
         catch (e) { toast(e.message, "error"); fb.setSubmitting(false); }
       });
       openModal("Ghi nhận trạng thái máy", fb.form);
@@ -774,7 +783,7 @@
       ];
       const fb = formBuilder(fields, async (data, s) => {
         fb.setSubmitting(true);
-        try { await api("/api/operations/downtimes", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...data, start_time: iso(data.start_time), end_time: data.end_time ? iso(data.end_time) : null }) }); closeModal(); toast("Đã ghi nhận."); load(); }
+        try { await api("/api/operations/downtimes", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...data, start_time: iso(data.start_time), end_time: data.end_time ? iso(data.end_time) : null, is_simulated: dataMode === "simulation" }) }); closeModal(); toast("Đã ghi nhận."); load(); }
         catch (e) { toast(e.message, "error"); fb.setSubmitting(false); }
       });
       openModal("Ghi nhận dừng máy", fb.form);
@@ -815,7 +824,7 @@
       ];
       const fb = formBuilder(fields, async (data, s) => {
         fb.setSubmitting(true);
-        try { await api("/api/operations/qc", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...data, check_time: iso(data.check_time) }) }); closeModal(); toast("Đã ghi nhận."); load(); }
+        try { await api("/api/operations/qc", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...data, check_time: iso(data.check_time), is_simulated: dataMode === "simulation" }) }); closeModal(); toast("Đã ghi nhận."); load(); }
         catch (e) { toast(e.message, "error"); fb.setSubmitting(false); }
       });
       openModal("Ghi nhận kết quả QC", fb.form);
@@ -849,7 +858,7 @@
       ];
       const fb = formBuilder(fields, async (data, s) => {
         fb.setSubmitting(true);
-        try { await api("/api/operations/material", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...data, recorded_at: iso(data.recorded_at) }) }); closeModal(); toast("Đã ghi nhận."); load(); }
+        try { await api("/api/operations/material", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...data, recorded_at: iso(data.recorded_at), is_simulated: dataMode === "simulation" }) }); closeModal(); toast("Đã ghi nhận."); load(); }
         catch (e) { toast(e.message, "error"); fb.setSubmitting(false); }
       });
       openModal("Ghi nhận tình trạng vật tư", fb.form);
@@ -953,7 +962,7 @@
       const fb = formBuilder(fields, async (data, s) => {
         fb.setSubmitting(true);
         try {
-          const payload = { ...data, request_id: formRequestId, start_time: data.start_time ? iso(data.start_time) : null, end_time: data.end_time ? iso(data.end_time) : null };
+          const payload = { ...data, request_id: formRequestId, start_time: data.start_time ? iso(data.start_time) : null, end_time: data.end_time ? iso(data.end_time) : null, is_simulated: dataMode === "simulation" };
           const resp = await api("/api/incidents", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
           closeModal(); toast(resp.message || "Đã tạo sự cố."); load();
         } catch (e) { toast(e.message, "error"); fb.setSubmitting(false); }
@@ -997,13 +1006,36 @@
       inc = (await api("/api/incidents/" + id)).data;
       if (!ctx.isCurrent()) return;
       summaryCard.appendChild(h("div", { class: "card-title" }, [h("span", { text: inc.code + " — " + inc.title }), simBadge(inc)]));
-      summaryCard.appendChild(h("div", { class: "kv-list" }, [
+      const rootCauseLabels = { UNKNOWN: "Chưa xác định", HYPOTHESIS: "Giả thuyết", CONFIRMED: "Đã xác nhận" };
+      const kvList = h("div", { class: "kv-list" });
+      summaryCard.appendChild(kvList);
+      const objRow = kv("Đối tượng", inc.source_object_type ? (inc.source_object_type + " #" + inc.source_object_id) : "—");
+      const deptRow = kv("Bộ phận", inc.assigned_department_id ? ("#" + inc.assigned_department_id) : "—");
+      const rows = [
         kv("Loại", typeLabel(inc.incident_type)), kv("Mức độ", null, severityBadge(inc.severity)),
         kv("Trạng thái", null, statusBadge(inc.status)),
         kv("Bắt đầu", inc.start_time ? fmt(inc.start_time) : "—"),
-        kv("Đối tượng", inc.source_object_type ? (inc.source_object_type + " #" + inc.source_object_id) : "—"),
-        kv("Bộ phận", inc.assigned_department_id ? ("#" + inc.assigned_department_id) : "—"),
-      ]));
+        objRow, deptRow,
+      ];
+      if (inc.recovered_at) rows.push(kv("Khôi phục lúc", fmt(inc.recovered_at)));
+      if (inc.recovered_by) rows.push(kv("Người xác nhận khôi phục", inc.recovered_by));
+      if (inc.closed_at) rows.push(kv("Đóng hồ sơ lúc", fmt(inc.closed_at)));
+      if (inc.closed_by) rows.push(kv("Người đóng", inc.closed_by));
+      if (inc.resolution_summary) rows.push(kv("Tóm tắt xử lý", inc.resolution_summary));
+      rows.push(kv("Trạng thái nguyên nhân", rootCauseLabels[inc.root_cause_status] || inc.root_cause_status || "Chưa xác định"));
+      rows.forEach((r) => kvList.appendChild(r));
+      if (inc.source_object_type && inc.source_object_id) {
+        loadOptions(inc.source_object_type).then((opts) => {
+          const o = opts.find((x) => x.value === Number(inc.source_object_id));
+          if (o) objRow.lastChild.textContent = o.label;
+        }).catch(() => {});
+      }
+      if (inc.assigned_department_id) {
+        loadOptions("department").then((opts) => {
+          const o = opts.find((x) => x.value === Number(inc.assigned_department_id));
+          if (o) deptRow.lastChild.textContent = o.label;
+        }).catch(() => {});
+      }
       if (inc.description) summaryCard.appendChild(h("div", { class: "explain", style: "margin-top:12px;" }, [h("h4", { text: "Quan sát (triệu chứng)" }), h("div", { text: inc.description })]));
       renderActionCard(actCard, inc, id);
     } catch (e) {
@@ -1016,6 +1048,7 @@
     loadContextSection(left, id, inc);
     loadCausesSection(left, id);
     loadLinksSection(left, id);
+    loadHistorySection(left, id);
     loadRunsSection(actCard, id);
   }
 
@@ -1043,9 +1076,14 @@
       catch (e) { toast(e.message, "error"); }
     } }));
     actCard.appendChild(statusRow);
-    if (userHasRole("COORDINATOR")) {
+    const canResolve = userHasRole("COORDINATOR") || userHasRole("ADMIN");
+    if (inc.status === "RESOLVED") {
+      actCard.appendChild(h("div", { class: "message visible success", text: "Hồ sơ đã đóng" }));
+    } else if (canResolve) {
       actCard.appendChild(h("button", { class: "btn btn-outline", style: "width:100%;margin-top:8px;", text: "Xác nhận khôi phục", onclick: () => recoverIncident(id) }));
       actCard.appendChild(h("button", { class: "btn btn-primary", style: "width:100%;margin-top:8px;", text: "Đóng hồ sơ", onclick: () => closeIncident(id) }));
+    } else {
+      actCard.appendChild(h("p", { class: "cell-sub", text: "Cần tài khoản điều phối để xác nhận khôi phục/đóng hồ sơ" }));
     }
     actCard.appendChild(h("button", { class: "btn btn-primary", style: "width:100%;margin-top:8px;", text: "Chạy phân tích tác động", onclick: () => navigate("analysis?incident=" + id) }));
   }
@@ -1080,6 +1118,29 @@
       (body, links) => {
         if (!links.length) { body.appendChild(h("p", { class: "cell-sub", text: "Chưa liên kết bản ghi vận hành nào." })); return; }
         links.forEach((l) => body.appendChild(h("div", { class: "explain" }, [h("div", { text: l.source_type + " #" + l.source_id })])));
+      });
+  }
+  const HISTORY_ACTIONS = {
+    CREATED: "Tạo sự cố", UPDATED: "Cập nhật", RECOVERED: "Xác nhận khôi phục",
+    CLOSED: "Đóng hồ sơ", CAUSE_HYPOTHESIS: "Thêm nguyên nhân", CAUSE_CONFIRMED: "Xác nhận nguyên nhân",
+    CAUSE_UPDATED: "Cập nhật nguyên nhân", CONTEXT_VERIFIED: "Xác minh bối cảnh",
+  };
+  function loadHistorySection(left, id) {
+    const card = h("div", { class: "card" });
+    left.appendChild(card);
+    asyncSection(card, "Dòng thời gian",
+      () => api("/api/incidents/" + id + "/history").then(d => d.data),
+      (body, entries) => {
+        if (!entries.length) { body.appendChild(h("p", { class: "cell-sub", text: "Chưa có hoạt động nào." })); return; }
+        entries.forEach((e) => {
+          const detail = e.detail || {};
+          const note = e.action === "RECOVERED" ? detail.note : (e.action === "CLOSED" ? detail.resolution_summary : null);
+          body.appendChild(h("div", { class: "explain", style: "margin-bottom:8px;" }, [
+            h("div", { class: "cell-sub", text: fmt(e.changed_at) + (e.changed_by ? " · " + e.changed_by : "") }),
+            h("div", { text: HISTORY_ACTIONS[e.action] || e.action, style: "margin-top:4px;" }),
+            note ? h("div", { class: "cell-sub", text: note }) : null,
+          ]));
+        });
       });
   }
   function loadRunsSection(actCard, id) {
@@ -1930,9 +1991,33 @@
     box.textContent = "";
     box.appendChild(h("div", { class: "card-title" }, [h("span", { text: "Kết quả phân tích" }), h("span", { class: "sub", text: "Quy tắc " + (r.rules || []).join(", ") + " — phiên bản " + r.rule_version + (r.run_id ? " · lần chạy #" + r.run_id : "") })]));
     if (r.snapshot_available === false) box.appendChild(h("div", { class: "message visible warn", text: "Lần chạy cũ chưa lưu snapshot đầy đủ; bối cảnh/ước tính có thể không tái hiện được." }));
-    if (r.quantification && r.quantification.available) box.appendChild(h("div", { class: "message visible info", text: "Định lượng: " + r.quantification.formula + " = " + r.quantification.lost_quantity + " pcs" }));
-    else if (r.quantification) box.appendChild(h("div", { class: "message visible warn", text: r.quantification.message }));
-
+    if (r.quantification) {
+      const q = r.quantification;
+      if (q.available) {
+        if (q.kind === "QUALITY") {
+          box.appendChild(h("div", { class: "explain" }, [
+            h("div", { style: "display:flex;gap:8px;align-items:center;flex-wrap:wrap;" }, [badge("Định lượng", "blue"), h("strong", { text: "Tỷ lệ lỗi " + q.defect_rate + "%" })]),
+            h("div", { class: "cell-sub", style: "margin-top:4px;", text: q.defect_qty + " / " + q.inspected_qty + " kiểm → ước tính cả lô " + q.lot_qty + " × " + (q.defect_rate / 100) + " = " + q.estimated_defects + " pcs" }),
+            q.order_code ? h("div", { class: "cell-sub", text: q.estimated_defects + " ÷ " + q.plan_qty + " (lệnh " + q.order_code + ") = " + q.plan_defect_pct + "% kế hoạch" }) : null,
+            (q.materials && q.materials.length) ? h("div", { class: "cell-sub", text: "Vật tư cần truy xuất: " + q.materials.map(m => m.material_code).join(", ") }) : null,
+            h("div", { class: "cell-sub", text: "Công thức: " + q.formula }),
+            q.assumptions ? h("div", { class: "cell-sub", text: "Giả định: " + q.assumptions }) : null,
+          ]));
+        } else if (q.kind === "MATERIAL_SHORTAGE") {
+          box.appendChild(h("div", { class: "explain" }, [
+            h("div", { style: "display:flex;gap:8px;align-items:center;flex-wrap:wrap;" }, [badge("Định lượng", "blue"), h("strong", { text: q.material_code + " còn " + q.available_qty + " pcs, cạn sau " + q.minutes + " phút" })]),
+            h("div", { class: "cell-sub", style: "margin-top:4px;", text: q.available_qty + " pcs ÷ " + q.rate_per_minute + " pcs/phút = " + q.minutes + " phút" }),
+            q.stockout_time ? h("div", { class: "cell-sub", text: "Thời điểm cạn: " + fmt(q.stockout_time) + " (công đoạn " + q.process_code + ")" }) : null,
+            h("div", { class: "cell-sub", text: "Công thức: " + q.formula }),
+            q.assumptions ? h("div", { class: "cell-sub", text: "Giả định: " + q.assumptions }) : null,
+          ]));
+        } else {
+          box.appendChild(h("div", { class: "message visible info", text: "Định lượng: " + q.formula + " = " + q.lost_quantity + " pcs" }));
+        }
+      } else {
+        box.appendChild(h("div", { class: "message visible warn", text: q.message || "Chưa đủ dữ liệu để định lượng." }));
+      }
+    }
     // Bối cảnh sản xuất
     if (r.context) {
       const c = r.context;
@@ -1962,6 +2047,33 @@
       ]));
     } else if (r.buffer_estimate && r.buffer_estimate.message) {
       box.appendChild(h("div", { class: "explain" }, [h("div", { class: "cell-sub", text: r.buffer_estimate.message })]));
+    }
+    // Độ nhạy theo thời gian dừng (tính phía client, không gọi API).
+    if (r.capacity_estimate && r.capacity_estimate.rate_per_minute) {
+      const ce = r.capacity_estimate, be = r.buffer_estimate;
+      const durations = [10, 15, 30, 60];
+      const sens = h("div", { class: "explain" });
+      sens.appendChild(h("div", { style: "display:flex;gap:8px;align-items:center;" }, [badge("Độ nhạy", "blue"), h("strong", { text: "Độ nhạy theo thời gian dừng" })]));
+      const tbl = h("table");
+      const thead = h("thead"); const trh = h("tr");
+      trh.appendChild(h("th", { text: "Thời gian dừng" }));
+      trh.appendChild(h("th", { text: "Năng lực có nguy cơ" }));
+      if (be && be.available) trh.appendChild(h("th", { text: "Hàng đệm" }));
+      thead.appendChild(trh); tbl.appendChild(thead);
+      const tbody = h("tbody");
+      durations.forEach(d => {
+        const tr = h("tr");
+        tr.appendChild(h("td", { text: d + " phút" }));
+        tr.appendChild(h("td", { text: Math.round(d * ce.rate_per_minute) + " " + (ce.unit || "pcs") }));
+        if (be && be.available) {
+          tr.appendChild(h("td", { text: d > be.depletion_minutes ? "Cạn sau " + be.depletion_minutes + " phút (trong khi dừng)" : "Chưa cạn (" + be.depletion_minutes + " phút)" }));
+        }
+        tbody.appendChild(tr);
+      });
+      tbl.appendChild(tbody);
+      sens.appendChild(tbl);
+      sens.appendChild(h("div", { class: "cell-sub", text: "Giả định: tốc độ giữ nguyên, không bổ sung hàng đệm, không sản xuất bù." }));
+      box.appendChild(sens);
     }
     // Sự cố tương tự
     const related = r.related_past_incidents || [];
@@ -2031,6 +2143,88 @@
         if (window.confirm("Đã tạo công việc #" + taskId + ". Mở danh sách công việc?")) navigate("tasks");
       }
     } catch (e) { toast(e.message, "error"); }
+  }
+
+  /* ================================================= bảng gợi ý theo bộ phận */
+  function renderActionMatrix() {
+    const ctx = activePageCtx;
+    const v = $("#view");
+    v.textContent = "";
+    v.appendChild(h("div", { class: "section-head" }, [h("div", {}, [h("h2", { text: "Bảng gợi ý theo bộ phận" }), h("div", { class: "desc", text: "Hành động đề xuất cho 3 tình huống sự cố, xếp theo bộ phận." })])]));
+    const card = h("div", { class: "card" });
+    v.appendChild(card);
+    const PRIORITY = { HIGH: ["Cao", "red"], MEDIUM: ["Trung bình", "amber"], LOW: ["Thấp", "gray"], CRITICAL: ["Nghiêm trọng", "red"] };
+    function pBadge(p) { const m = PRIORITY[p] || [p, "gray"]; return badge(m[0], m[1]); }
+
+    async function runForScenario(s) {
+      if (!s.incident) return;
+      try {
+        await api("/api/analysis/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ incident_id: s.incident.id, max_depth: 5, duration_minutes: 15 }) });
+        toast("Đã chạy phân tích."); load();
+      } catch (e) { toast(e.message, "error"); }
+    }
+
+    async function load() {
+      card.textContent = ""; card.appendChild(spinner());
+      try {
+        const d = await api("/api/analysis/action-matrix?simulated=" + (dataMode === "simulation"));
+        if (!ctx.isCurrent()) return;
+        card.textContent = "";
+        const m = d.data;
+        const scenarios = m.scenarios || [], departments = m.departments || [], cells = m.cells || [];
+        if (!scenarios.length || !departments.length) {
+          card.appendChild(emptyBox("matrix", "Chưa có dữ liệu", "Chạy phân tích cho các sự cố để xem hành động theo bộ phận."));
+          return;
+        }
+        const cellMap = {};
+        cells.forEach(c => { cellMap[c.department + "|" + c.incident_type] = c.actions; });
+
+        const table = h("table");
+        const thead = h("thead");
+        const trh = h("tr");
+        trh.appendChild(h("th", { text: "Bộ phận" }));
+        scenarios.forEach(s => {
+          trh.appendChild(h("th", {}, [
+            h("div", { text: s.label }),
+            s.incident ? h("div", { class: "cell-sub", text: s.incident.code }) : h("div", { class: "cell-sub", text: "—" }),
+            s.max_priority ? pBadge(s.max_priority) : null,
+            (s.incident && !s.run_id) ? h("button", { class: "btn btn-sm btn-primary", text: "Chạy phân tích", onclick: () => runForScenario(s) }) : null,
+          ]));
+        });
+        thead.appendChild(trh); table.appendChild(thead);
+
+        const tbody = h("tbody");
+        departments.forEach(dept => {
+          const tr = h("tr");
+          tr.appendChild(h("td", {}, [h("strong", { text: dept.name }), h("div", { class: "cell-sub", text: dept.code })]));
+          scenarios.forEach(s => {
+            const td = h("td");
+            if (!s.incident) { td.appendChild(h("span", { class: "cell-sub", text: "—" })); tr.appendChild(td); return; }
+            const acts = cellMap[dept.code + "|" + s.type] || [];
+            if (!acts.length) { td.appendChild(h("span", { class: "cell-sub", text: "—" })); tr.appendChild(td); return; }
+            acts.forEach(a => {
+              td.appendChild(h("div", { class: "explain", style: "margin-bottom:6px;" }, [
+                h("div", {}, [pBadge(a.priority)]),
+                h("div", { text: a.action, style: "margin-top:4px;" }),
+                a.id ? h("button", { class: "btn btn-sm btn-secondary", text: "Tạo công việc", onclick: () => createTaskFromAction(a, { run_id: s.run_id, incident_id: s.incident ? s.incident.id : null }) }) : null,
+              ]));
+            });
+            tr.appendChild(td);
+          });
+          tbody.appendChild(tr);
+        });
+        table.appendChild(tbody);
+        const wrap = h("div", { class: "table-wrap" });
+        wrap.appendChild(table);
+        card.appendChild(wrap);
+      } catch (e) {
+        if (!ctx.isCurrent()) return;
+        card.textContent = "";
+        card.appendChild(errorBox(e.message, load));
+      }
+    }
+
+    load();
   }
   async function loadHistory() {
     const ctx = activePageCtx;
@@ -2485,6 +2679,7 @@
     tasks: { title: "Công việc theo bộ phận", group: "Vận hành", icon: "tasks", render: renderTasks },
     map: { title: "Bản đồ liên kết", group: "Phân tích", icon: "map", render: renderMap },
     analysis: { title: "Phân tích tác động", group: "Phân tích", icon: "analysis", render: renderAnalysis },
+    matrix: { title: "Bảng gợi ý theo bộ phận", group: "Phân tích", icon: "matrix", render: renderActionMatrix },
     scenarios: { title: "Kịch bản mô phỏng", group: "Phân tích", icon: "scenarios", render: renderScenarios },
     catalog: { title: "Danh mục sản xuất", group: "Thiết lập dữ liệu", icon: "catalog", render: renderCatalog },
     system: { title: "Nguồn dữ liệu & ánh xạ", group: "Thiết lập dữ liệu", icon: "system", render: renderSystem },

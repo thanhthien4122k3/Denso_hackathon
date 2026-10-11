@@ -189,3 +189,11 @@ def test_production_records_still_works(demo):
     from tests.helpers import make_payload
     resp = demo.post("/api/production-records", json=make_payload())
     assert resp.status_code == 201
+
+
+def test_old_scenario_actions_have_departments(demo):
+    rid = _incident_id(demo, "INC-001")
+    d = demo.post("/api/analysis/run", json={"incident_id": rid, "max_depth": 5}).json()["data"]
+    dept_codes = {a["department_code"] for a in d["actions"]}
+    assert {"MAINT", "PROD", "PLAN"} <= dept_codes
+    assert all(a["department_id"] is not None for a in d["actions"])

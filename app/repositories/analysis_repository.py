@@ -137,6 +137,20 @@ class AnalysisRepository:
             return cur.fetchone()
 
     @_db_errors
+    def latest_run_for_type(self, incident_type, is_simulated):
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT r.id, r.run_at, r.source_id AS incident_id "
+                "FROM production.analysis_runs r "
+                "JOIN production.incidents i ON i.id = r.source_id "
+                "WHERE r.source_type = 'INCIDENT' AND r.is_simulated = %(s)s "
+                "AND i.incident_type = %(t)s "
+                "ORDER BY r.id DESC LIMIT 1",
+                {"t": incident_type, "s": is_simulated},
+            )
+            return cur.fetchone()
+
+    @_db_errors
     def list_impacts(self, run_id):
         with self._conn() as conn, conn.cursor() as cur:
             cur.execute(

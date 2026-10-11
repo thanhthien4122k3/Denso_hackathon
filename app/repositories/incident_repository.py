@@ -82,6 +82,17 @@ class IncidentRepository:
             return cur.fetchone()
 
     @_db_errors
+    def latest_by_type(self, incident_type, is_simulated):
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM production.incidents "
+                "WHERE incident_type = %(t)s AND is_simulated = %(s)s "
+                "ORDER BY start_time DESC NULLS LAST, id DESC LIMIT 1",
+                {"t": incident_type, "s": is_simulated},
+            )
+            return cur.fetchone()
+
+    @_db_errors
     def create(self, data):
         cols = [c for c in _INCIDENT_COLS if c in data]
         sql = (

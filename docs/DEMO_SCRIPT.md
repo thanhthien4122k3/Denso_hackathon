@@ -103,7 +103,8 @@ Thời lượng: khoảng 5–7 phút. Toàn bộ dữ liệu là **mô phỏng*
 
 - **Ai làm:** `demo-coordinator`.
 - **Thao tác:** ghi trạng thái **RUNNING** cho M10, đóng khoảng dừng, bấm **Xác nhận khôi phục** với thời điểm **10:12**; chạy lại phân tích với **12 phút**.
-- **Kết quả mong đợi:** năng lực có nguy cơ **144 pcs** (12 × 12); snapshot 15 phút cũ vẫn là **180**.
+- **Kết quả mong đợi:** hồ sơ hiện "Khôi phục lúc 10:12" và "Người xác nhận: demo-coordinator", trạng thái **Đang xử lý**, thẻ **Dòng thời gian** có dòng "Xác nhận khôi phục" kèm ghi chú; năng lực có nguy cơ **144 pcs** (12 × 12); snapshot 15 phút cũ vẫn là **180**.
+- **Lưu ý:** nút **Xác nhận khôi phục**/**Đóng hồ sơ** chỉ hiện với tài khoản điều phối (hoặc admin); tài khoản khác chỉ thấy dòng giải thích.
 - **Lời dẫn:** "Khôi phục là hành động riêng, có thời điểm và người xác nhận; lịch sử phân tích cũ không bị sửa."
 
 ---
@@ -112,7 +113,7 @@ Thời lượng: khoảng 5–7 phút. Toàn bộ dữ liệu là **mô phỏng*
 
 - **Ai làm:** `demo-coordinator`.
 - **Thao tác:** bấm **Đóng hồ sơ**, nhập **tóm tắt kết quả xử lý**, trạng thái nguyên nhân (có thể **UNKNOWN** nếu chưa xác định).
-- **Kết quả mong đợi:** hồ sơ về **RESOLVED**, có người đóng và thời điểm đóng.
+- **Kết quả mong đợi:** hồ sơ về **RESOLVED**, hiện người đóng, thời điểm đóng, tóm tắt; hai nút thao tác biến mất, thay bằng dòng **Hồ sơ đã đóng**.
 - **Lời dẫn:** "Cho phép đóng với nguyên nhân chưa xác định, miễn có tóm tắt xử lý đầy đủ."
 
 ---

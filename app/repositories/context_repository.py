@@ -435,7 +435,8 @@ class ContextRepository:
     def list_history(self, incident_id):
         with self._conn() as conn, conn.cursor() as cur:
             cur.execute(
-                "SELECT * FROM production.incident_history WHERE incident_id = %(id)s ORDER BY id",
+                "SELECT * FROM production.incident_history WHERE incident_id = %(id)s "
+                "ORDER BY changed_at, id LIMIT 100",
                 {"id": incident_id},
             )
             return cur.fetchall()

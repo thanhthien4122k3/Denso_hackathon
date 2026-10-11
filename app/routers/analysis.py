@@ -98,3 +98,8 @@ def list_runs(page: int = Query(1, ge=1), page_size: int = Query(DEFAULT_PAGE_SI
 @router.get("/runs/{run_id}")
 def get_run(run_id: int, service: AnalysisService = Depends(get_service)):
     return {"success": True, "message": "OK", "data": service.get_run(run_id)}
+
+
+@router.get("/action-matrix")
+def action_matrix(simulated: bool = Query(False), service: AnalysisService = Depends(get_service)):
+    return {"success": True, "message": "OK", "data": service.action_matrix(simulated)}

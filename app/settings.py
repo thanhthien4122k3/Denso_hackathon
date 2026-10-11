@@ -20,6 +20,7 @@ load_dotenv(ENV_FILE, override=False)
 # Các giá trị điều chỉnh của ứng dụng, có thể ghi đè qua .env (xem .env.example).
 MAX_QUANTITY = int(os.getenv("MAX_QUANTITY", "1000000000"))
 MATERIAL_LOW_THRESHOLD = int(os.getenv("MATERIAL_LOW_THRESHOLD", "50"))
+QC_DEFECT_RATE_THRESHOLD = float(os.getenv("QC_DEFECT_RATE_THRESHOLD", "5"))
 DEFAULT_PAGE_SIZE = int(os.getenv("DEFAULT_PAGE_SIZE", "20"))
 MAX_PAGE_SIZE = int(os.getenv("MAX_PAGE_SIZE", "100"))
 

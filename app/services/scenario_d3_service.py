@@ -77,6 +77,7 @@ class ScenarioD3Service:
                 "code": order["code"], "name": order["name"],
                 "status": order["status"], "is_simulated": True,
                 "product_id": nid("product", order["product_code"]),
+                "plan_qty": order["plan_qty"],
                 "description": (f"Kế hoạch {order['plan_qty']} pcs, "
                                 f"khung {order['plan_start']} -> {order['plan_end']}"),
             })
@@ -84,6 +85,7 @@ class ScenarioD3Service:
             ids[("lot", lot["code"])] = ensure("lot", {
                 "code": lot["code"], "name": lot["name"], "is_simulated": True,
                 "production_order_id": nid("order", lot["order_code"]),
+                "qty": lot["qty"],
                 "description": f"Quy mô lô {lot['qty']} pcs (không phải sản lượng đã hoàn thành).",
             })
 
@@ -140,6 +142,23 @@ class ScenarioD3Service:
                 "valid_from": s.dt(c["valid_from"]),
                 "source_confirmation": c["source_confirmation"],
                 "scenario_id": s.SCENARIO_ID, "is_simulated": True,
+            })
+        for q in s.QC_RESULTS:
+            self.operations.create_qc({
+                "lot_id": nid("lot", q["lot_code"]),
+                "product_id": nid("product", q["product_code"]),
+                "process_id": nid("process", q["process_code"]),
+                "check_time": s.dt(q["check_time"]),
+                "inspected_qty": q["inspected_qty"], "defect_qty": q["defect_qty"],
+                "defect_type": q["defect_type"], "result": q["result"],
+                "is_simulated": True,
+            })
+        for ms in s.MATERIAL_STATUSES:
+            self.operations.create_material({
+                "material_id": nid("material", ms["material_code"]),
+                "recorded_at": s.dt(ms["recorded_at"]),
+                "available_qty": ms["available_qty"], "unit": ms["unit"],
+                "scope": ms["scope"], "is_simulated": True,
             })
 
         # Lớp logic hệ thống + mapping
@@ -279,6 +298,22 @@ class ScenarioD3Service:
             })
             self.context.add_history(incident_id, "CREATED", "demo-supervisor",
                                      {"code": inc["code"], "scenario_id": s.SCENARIO_ID})
+
+        # Hai sự cố mở cho tình huống QUALITY và MATERIAL_SHORTAGE (idempotent).
+        for inc in s.OPEN_INCIDENTS:
+            if self.incidents.get_by_code(inc["code"]) is not None:
+                continue
+            self.incidents.create({
+                "code": inc["code"], "title": inc["title"],
+                "incident_type": inc["incident_type"],
+                "source_object_type": inc["source_object_type"],
+                "source_object_id": nid(inc["source_object_type"], inc["source_object_code"]),
+                "start_time": s.dt(inc["start_time"]),
+                "severity": inc["severity"], "description": inc["description"],
+                "status": inc["status"],
+                "assigned_department_id": nid("department", inc["department_code"]),
+                "request_id": uuid4(), "is_simulated": True,
+            })
 
         # Tài khoản demo (mật khẩu sinh ngẫu nhiên, trả về đúng một lần).
         credentials = {}

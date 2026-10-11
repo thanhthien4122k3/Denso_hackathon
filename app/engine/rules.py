@@ -28,6 +28,11 @@ def _validate_rule(rule: dict) -> None:
         op = cond.get("op", "eq")
         if op not in ALLOWED_OPS:
             raise RulesConfigError(f"Toán tử không hỗ trợ: {op}.")
+    for a in rule.get("actions", []):
+        if not a.get("department") or not a.get("text"):
+            raise RulesConfigError(f"Hành động trong quy tắc {rule.get('id')} thiếu department/text.")
+        if a.get("text_data") is not None and not isinstance(a.get("text_data"), str):
+            raise RulesConfigError(f"text_data trong quy tắc {rule.get('id')} phải là chuỗi.")
 
 
 def load_rules() -> tuple[list, str]:

@@ -1,7 +1,7 @@
 # Phân tích — Tài liệu tham chiếu chi tiết
 
 Tài liệu mô tả chi tiết các mục trong nhóm menu **Phân tích**:
-**Bản đồ liên kết** và **Phân tích tác động**, kèm mô tả từng trường (field).
+**Bản đồ liên kết**, **Phân tích tác động** và **Bảng gợi ý theo bộ phận**, kèm mô tả từng trường (field).
 
 ---
 
@@ -212,9 +212,17 @@ Hai khái niệm **độc lập**, một tác động có thể vừa `INDIRECT`
 | `priority` | Mức ưu tiên. |
 | `id` | ID `analysis_actions` (dùng để tạo công việc, chống trùng). |
 
+> `action` được sinh từ `text_data` (mẫu chuỗi điền số liệu thật từ `quantification`/`context`)
+> khi đủ khóa; thiếu khóa thì dùng `text` tĩnh. Mức ưu tiên được nâng theo dữ liệu khi có:
+> QUALITY → `HIGH` khi `defect_rate >= QC_DEFECT_RATE_THRESHOLD` (mặc định 5%), ngược lại `MEDIUM`;
+> MATERIAL_SHORTAGE → `HIGH` khi thời gian cạn < 30 phút, ngược lại `MEDIUM`.
+
 ### 2.7. Định lượng và ước tính
 
-#### `quantification` (sản lượng có nguy cơ mất — dùng tham số người dùng)
+`quantification` trả về theo từng loại sự cố (khóa `kind`); khi thiếu dữ liệu thì
+`available = false` kèm `message`, **không bịa số**.
+
+#### `quantification.kind = MACHINE_STOP` (sản lượng có nguy cơ mất — dùng tham số người dùng)
 
 | Trường | Mô tả |
 |---|---|
@@ -225,6 +233,35 @@ Hai khái niệm **độc lập**, một tác động có thể vừa `INDIRECT`
 | `rate_per_minute` | Tốc độ (pcs/phút). |
 | `lost_quantity` | Kết quả ước tính. |
 | `assumptions` | Giả định (chưa xét tồn đệm, sản xuất bù, máy thay thế). |
+
+#### `quantification.kind = QUALITY` (lỗi chất lượng, nguồn là lô)
+
+| Trường | Mô tả |
+|---|---|
+| `defect_rate` | Tỷ lệ lỗi = `defect_qty ÷ inspected_qty × 100` (%). |
+| `inspected_qty` / `defect_qty` | Số kiểm / số lỗi (từ `qc_results`). |
+| `lot_qty` | Quy mô lô (từ `lots.qty`). |
+| `estimated_defects` | Lỗi ước tính cả lô = `lot_qty × tỷ lệ lỗi`. |
+| `order_code` / `plan_qty` | Lệnh và kế hoạch sản lượng (từ `production_orders.plan_qty`). |
+| `plan_defect_pct` | `estimated_defects ÷ plan_qty × 100` (% kế hoạch). |
+| `materials` | Vật tư cần truy xuất (tìm ngược từ các công đoạn lô đã đi qua). |
+| `assumptions` | "Mẫu kiểm đại diện cho cả lô." |
+
+#### `quantification.kind = MATERIAL_SHORTAGE` (thiếu vật tư, nguồn là vật tư)
+
+| Trường | Mô tả |
+|---|---|
+| `material_code` | Mã vật tư. |
+| `available_qty` | Tồn khả dụng (từ `material_statuses`). |
+| `rate_per_minute` | Tốc độ tiêu thụ (từ `capacity_profiles` của công đoạn phụ thuộc). |
+| `minutes` | Thời gian cạn = `available_qty ÷ rate`. |
+| `stockout_time` | Thời điểm cạn (ISO) = thời điểm đánh giá + thời gian cạn. |
+| `stockout_hm` | Thời điểm cạn dạng `HH:MM`. |
+| `process_code` | Công đoạn phụ thuộc vật tư. |
+| `assumptions` | "1 đơn vị vật tư cho 1 sản phẩm, không nhập thêm hàng, tốc độ không đổi." |
+
+> Ngưỡng cấu hình: `MATERIAL_LOW_THRESHOLD` (mặc định 50) và `QC_DEFECT_RATE_THRESHOLD`
+> (mặc định 5) đọc từ `.env`.
 
 #### `capacity_estimate` (năng lực theo công suất tham chiếu)
 
@@ -272,6 +309,18 @@ Hai khái niệm **độc lập**, một tác động có thể vừa `INDIRECT`
 | `dataset_delay` | boolean | Loại sự cố là chậm dữ liệu. |
 | `defect_rate` | number/null | Tỷ lệ lỗi QC (%). |
 | `material_available` | number/null | Số lượng vật tư khả dụng. |
+
+### 2.9. `GET /api/analysis/action-matrix` — bảng gợi ý theo bộ phận
+
+Chỉ đọc, không chạy phân tích, không ghi DB. Tham số `simulated=true|false` chọn chế độ dữ liệu.
+
+- `scenarios[]`: một phần tử cho mỗi loại (`MACHINE_STOP`/`QUALITY`/`MATERIAL_SHORTAGE`) gồm
+  `type`, `label` (tiếng Việt), `incident {id, code, title}`, `run_id`, `run_at`, `max_priority`.
+  Chọn sự cố có lần phân tích mới nhất trong chế độ đó; chưa có phân tích thì chọn sự cố mới nhất
+  theo `start_time` và `run_id = null`.
+- `departments[]`: các bộ phận có ít nhất một hành động (`{code, name}`).
+- `cells[]`: `{department, incident_type, actions[{id, action, priority, department_id}]}` lấy từ
+  bảng `analysis_actions` của lần phân tích tương ứng.
 
 ---
 

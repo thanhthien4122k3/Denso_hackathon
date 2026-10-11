@@ -2,7 +2,8 @@
 # Operator hỗ trợ cho condition: eq, ne, gt, lt, gte, lte, in, exists.
 # Đây là quy tắc demo, chưa được Denso xác nhận.
 # Mã bộ phận dùng chung trong seed: PROD, MAINT, QC, PLAN, WH, DATA.
-version: "1.1"
+# text_data là mẫu chuỗi dùng khóa từ quantification/context; thiếu khóa thì dùng text.
+version: "1.2"
 rules:
   - id: R_MACHINE_STOP
     name: "Máy dừng lan truyền tới công đoạn phụ thuộc"
@@ -33,18 +34,28 @@ rules:
 
   - id: R_QUALITY
     name: "QC tăng lỗi trong lot"
-    version: 1
+    version: 2
     incident_type: QUALITY
     propagate_kinds:
       - production_dependency
     departments:
       - QC
       - WH
+      - PROD
+      - PLAN
     actions:
       - department: QC
         text: "Kiểm tra bổ sung hoặc đề xuất giữ lot chờ đánh giá."
+        text_data: "Giữ lô {lot} chờ đánh giá vì tỷ lệ lỗi {defect_rate:g}% vượt ngưỡng {threshold:g}%."
       - department: WH
         text: "Truy xuất vật tư liên quan tới lot."
+        text_data: "Truy xuất vật tư {materials} liên quan lô {lot}."
+      - department: PROD
+        text: "Tạm dừng chuyển lot sang công đoạn sau."
+        text_data: "Chưa chuyển lô {lot} sang công đoạn sau đến khi QC kết luận."
+      - department: PLAN
+        text: "Đánh giá ảnh hưởng lệnh sản xuất."
+        text_data: "Đánh giá ảnh hưởng lệnh {order_code}: ~{estimated_defects:g} pcs nguy cơ lỗi, {plan_defect_pct:g}% kế hoạch."
     priority: HIGH
     assumptions: "Nguyên nhân vật tư chỉ là giả thuyết khi chưa xác minh."
     hypotheses:
@@ -57,18 +68,24 @@ rules:
 
   - id: R_MATERIAL_SHORTAGE
     name: "Thiếu vật tư ảnh hưởng kế hoạch"
-    version: 1
+    version: 2
     incident_type: MATERIAL_SHORTAGE
     propagate_kinds:
       - production_dependency
     departments:
       - WH
+      - PROD
       - PLAN
     actions:
       - department: WH
         text: "Kiểm tra vật tư khả dụng."
+        text_data: "Xác nhận tồn thực tế {material} còn {available_qty:g} pcs, cạn sau ~{minutes:g} phút lúc {stockout_hm} và lịch nhập hàng."
+      - department: PROD
+        text: "Chuẩn bị phương án dừng/chuyển lô."
+        text_data: "Chuẩn bị dừng có kế hoạch hoặc chuyển lô tại {process_code} khi vật tư cạn."
       - department: PLAN
         text: "Đánh giá điều chỉnh lịch sản xuất."
+        text_data: "Đánh giá điều chỉnh lịch {process_code} và các công đoạn phía sau."
     priority: HIGH
     assumptions: "Ngưỡng thiếu vật tư là giá trị demo được cấu hình."
     hypotheses:
