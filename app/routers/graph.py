@@ -29,9 +29,10 @@ def meta():
 def map_graph(types: str | None = Query(None),
               center: str | None = Query(None),
               depth: int | None = Query(None, ge=1, le=10),
+              limit: int | None = Query(None, ge=1, le=500),
               service: GraphService = Depends(get_service)):
     selected = [t for t in (types.split(",") if types else []) if t in NODE_TYPES] or None
-    return {"success": True, "message": "OK", "data": service.get_map(selected, center, depth)}
+    return {"success": True, "message": "OK", "data": service.get_map(selected, center, depth, limit)}
 
 
 @router.get("/edges")

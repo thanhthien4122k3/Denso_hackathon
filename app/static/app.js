@@ -1214,7 +1214,7 @@
   const EDGE_STYLE = {
     production_dependency: { color: "#c62828", dash: null, width: 2.5 },
     data_flow: { color: "#1d4f91", dash: null, width: 2 },
-    data_mapping: { color: "#8a93a0", dash: "5 4", width: 1.6 },
+    data_mapping: { color: "#6a1b9a", dash: "6 3", width: 2.6 },
     department_responsibility: { color: "#b45309", dash: "2 2", width: 1.6 },
   };
   const TYPE_LANE = {
@@ -1243,13 +1243,18 @@
     return "M " + a.x + " " + a.y + " C " + (a.x + s * bend) + " " + a.y + ", " + (b.x - s * bend) + " " + b.y + ", " + b.x + " " + b.y;
   }
 
+  const EDGE_MEANING = {
+    production_dependency: (s, t) => t + " phụ thuộc vào " + s + " theo quan hệ đã khai báo.",
+    data_flow: (s, t) => "Dữ liệu được truyền từ " + s + " sang " + t + ".",
+    data_mapping: (s, t) => "Dữ liệu " + s + " được liên kết với đối tượng " + t + ".",
+    department_responsibility: (s, t) => "Bộ phận " + s + " phụ trách đối tượng " + t + ".",
+  };
+
   async function renderMap() {
     const ctx = activePageCtx;
     const v = $("#view");
     v.textContent = "";
-    v.appendChild(h("div", { class: "section-head" }, [h("div", {}, [h("h2", { text: "Bản đồ liên kết" }), h("div", { class: "desc", text: "Xem quan hệ giữa máy, công đoạn, vật tư, sản phẩm và dữ liệu." })])]));
-    const card = h("div", { class: "card" });
-    v.appendChild(card);
+    v.appendChild(h("div", { class: "section-head" }, [h("div", {}, [h("h2", { text: "Bản đồ liên kết" }), h("div", { class: "desc", text: "Chọn một máy hoặc công đoạn để xem quan hệ và ý nghĩa từng liên kết." })])]));
 
     let meta = { node: {}, edge: {} };
     try {
@@ -1262,56 +1267,82 @@
     const nodeLabel = (t) => meta.node[t] || NODE_LABELS[t] || t;
     const edgeLabel = (k) => meta.edge[k] || EDGE_LABELS[k] || k;
 
+    let graphData = { nodes: [], edges: [] };
+    let fullGraphData = { nodes: [], edges: [] };
+    let focusKey = null;          // đối tượng đang tập trung
+    let selectedEdge = null;
+    let impactNodes = {};
+    let impactEdges = new Set();
+    let impactSourceKey = null;
+    let contentBox = { w: 400, h: 300 };
+    let listMode = false;
+    let incident = null;
+    let showAll = false;
+    const view = { x: 0, y: 0, w: 0, h: 0 };
+
+    // ---- khung chọn phạm vi (góc nhìn, phạm vi liên kết, tìm kiếm) ----
+    const scope = h("div", { class: "card" });
     const toolbar = h("div", { class: "graph-toolbar" });
     const modeSel = selectInput("mode", [
-      { value: "business", label: "Chuỗi sản xuất" },
-      { value: "system", label: "Luồng dữ liệu" },
-      { value: "combined", label: "Kết hợp" },
+      { value: "process", label: "Quy trình sản xuất" },
+      { value: "data", label: "Nguồn dữ liệu" },
       { value: "incident", label: "Theo sự cố" },
-    ]);
+      { value: "combined", label: "Kết hợp (nâng cao)" },
+    ], "process");
+    const depthSel = selectInput("depth", [1, 2, 3].map(x => ({ value: x, label: x === 1 ? "Trực tiếp" : ("Thêm " + (x - 1) + " bước") })), 1);
+    const search = h("input", { placeholder: "Tìm máy/công đoạn theo mã hoặc tên..." });
+    const searchList = h("div", { class: "search-results" });
+    const searchBox = h("div", { class: "search-box", style: "min-width:220px;" });
+    searchBox.appendChild(icon("search")); searchBox.appendChild(search); searchBox.appendChild(searchList);
+    // Bộ chọn cho góc nhìn "Theo sự cố".
     const incSel = selectInput("incident", []);
-    const search = h("input", { placeholder: "Tìm node theo mã/tên..." });
-    const depthSel = selectInput("depth", [1, 2, 3, 4, 5].map(x => ({ value: x, label: x + " bước" })), 2);
-    toolbar.appendChild(field("Chế độ", modeSel));
-    toolbar.appendChild(field("Độ sâu", depthSel));
-    toolbar.appendChild(h("div", { class: "search-box", style: "min-width:180px;" }, [icon("search"), search]));
+    const runSel = selectInput("run", []);
+    toolbar.appendChild(field("Góc nhìn", modeSel));
+    toolbar.appendChild(field("Phạm vi liên kết", depthSel));
+    toolbar.appendChild(searchBox);
     toolbar.appendChild(h("div", { class: "spacer" }));
     toolbar.appendChild(h("button", { class: "btn btn-secondary btn-sm", text: "+", title: "Phóng to", onclick: () => zoomBy(1.25) }));
     toolbar.appendChild(h("button", { class: "btn btn-secondary btn-sm", text: "−", title: "Thu nhỏ", onclick: () => zoomBy(0.8) }));
     toolbar.appendChild(h("button", { class: "btn btn-secondary btn-sm", text: "Vừa khung", onclick: fitView }));
-    toolbar.appendChild(h("button", { class: "btn btn-secondary btn-sm", text: "Toàn bộ", onclick: resetAll }));
-    toolbar.appendChild(h("button", { class: "btn btn-secondary btn-sm", text: "Thêm quan hệ", onclick: edgeForm }));
-    card.appendChild(toolbar);
+    toolbar.appendChild(h("button", { class: "btn btn-secondary btn-sm", text: "Bỏ chọn", onclick: deselect }));
+    toolbar.appendChild(h("button", { class: "btn btn-secondary btn-sm", text: listMode ? "Sơ đồ" : "Danh sách", onclick: () => { listMode = !listMode; draw(); } }));
+    scope.appendChild(toolbar);
+    // Dòng tóm tắt ngắn.
+    const summary = h("div", { class: "graph-summary cell-sub" });
+    scope.appendChild(summary);
+    v.appendChild(scope);
 
-    card.appendChild(buildLegend());
+    // Bảng chọn sự cố (chỉ hiện ở góc nhìn "Theo sự cố").
+    const incidentCard = h("div", { class: "card", style: "display:none;" });
+    const incidentToolbar = h("div", { class: "toolbar" });
+    incidentToolbar.appendChild(field("Sự cố", incSel));
+    incidentToolbar.appendChild(field("Lần phân tích", runSel));
+    const runBtn = h("button", { class: "btn btn-primary btn-sm", text: "Chạy phân tích", onclick: runAnalysisForIncident });
+    incidentToolbar.appendChild(runBtn);
+    incidentCard.appendChild(incidentToolbar);
+    const incidentInfo = h("div", { class: "cell-sub" });
+    incidentCard.appendChild(incidentInfo);
+    v.appendChild(incidentCard);
 
+    // ---- vùng sơ đồ chính + bảng giải thích bên phải ----
+    const main = h("div", { class: "graph-layout" });
     const wrap = h("div", { class: "graph-wrap" });
-    card.appendChild(wrap);
     const tip = h("div", { class: "graph-tooltip" });
-    const detail = h("div", { class: "card" });
-    v.appendChild(detail);
+    main.appendChild(wrap);
+    const detail = h("div", { class: "card graph-detail" });
+    main.appendChild(detail);
+    v.appendChild(main);
 
-    let graphData = { nodes: [], edges: [] };
-    const view = { tx: 0, ty: 0, scale: 1 };
-    let selectedKey = null;
-    let highlightSet = null;
-    let searchSet = null;
-    let impactNodes = {};
-    let impactEdges = new Set();
-    let bbox = { w: 300, h: 200 };
-    let nodeEls = [];
-    let edgeEls = [];
-    let svgEl = null, vpEl = null;
+    v.appendChild(buildLegend());
 
     function buildLegend() {
       const frame = h("details", { class: "legend-frame" });
       frame.appendChild(h("summary", { text: "Cách đọc bản đồ" }));
       const read = h("div", { class: "read" });
-      read.appendChild(h("div", { text: "• Mũi tên: hướng quan hệ (A → B nghĩa là A ảnh hưởng/cung cấp cho B)." }));
-      read.appendChild(h("div", { text: "• Nét liền đậm: phụ thuộc sản xuất (có thể lan truyền sự cố). Nét đứt/chấm: ánh xạ dữ liệu hoặc trách nhiệm bộ phận." }));
+      read.appendChild(h("div", { text: "• Mũi tên chỉ chiều quan hệ đã khai báo, không phải chiều lan truyền sự cố." }));
+      read.appendChild(h("div", { text: "• Nét liền đậm: phụ thuộc sản xuất. Nét liền xanh: luồng dữ liệu. Nét đứt tím: ánh xạ dữ liệu–nghiệp vụ. Nét chấm cam: trách nhiệm bộ phận." }));
       read.appendChild(h("div", { text: "• Node nền nhạt + viền nét đứt: dữ liệu mô phỏng (chưa xác nhận bởi Denso)." }));
       frame.appendChild(read);
-
       const legend = h("div", { class: "legend" });
       Object.keys(NODE_COLORS).forEach(t => {
         const c = NODE_COLORS[t];
@@ -1319,7 +1350,7 @@
       });
       Object.keys(EDGE_STYLE).forEach(k => {
         const s = EDGE_STYLE[k];
-        const line = h("span", { class: "swatch-line", style: "border-color:" + s.color + ";" + (s.dash === "5 4" ? "border-top-style:dashed;" : s.dash === "2 2" ? "border-top-style:dotted;" : "") });
+        const line = h("span", { class: "swatch-line", style: "border-color:" + s.color + ";" + (s.dash === "5 4" || s.dash === "6 3" ? "border-top-style:dashed;" : s.dash === "2 2" ? "border-top-style:dotted;" : "") });
         legend.appendChild(h("span", { class: "lg" }, [line, edgeLabel(k)]));
       });
       frame.appendChild(legend);
@@ -1332,7 +1363,7 @@
         const d = await api("/api/graph/map");
         if (!ctx.isCurrent()) return;
         graphData = d.data;
-        if (graphData.nodes.length > 200) toast("Đồ thị lớn (" + graphData.nodes.length + " node). Dùng tìm kiếm để xem vùng lân cận.", "error");
+        fullGraphData = d.data;
         draw();
       } catch (e) {
         if (!ctx.isCurrent()) return;
@@ -1348,46 +1379,85 @@
       } catch (e) { /* không chặn bản đồ */ }
     }
 
-    function filtered() {
-      let nodes = graphData.nodes.slice(), edges = graphData.edges.slice();
-      const mode = modeSel.value;
-      if (mode === "business") {
+    function modeIs(m) { return modeSel.value === m; }
+
+    function filteredData() {
+      let nodes = fullGraphData.nodes.slice(), edges = fullGraphData.edges.slice();
+      if (modeIs("process")) {
         nodes = nodes.filter(n => BUSINESS_TYPES.includes(n.type));
         edges = edges.filter(e => BUSINESS_TYPES.includes(e.source_type) && BUSINESS_TYPES.includes(e.target_type));
-      } else if (mode === "system") {
+      } else if (modeIs("data")) {
         nodes = nodes.filter(n => SYSTEM_TYPES.includes(n.type));
         edges = edges.filter(e => SYSTEM_TYPES.includes(e.source_type) && SYSTEM_TYPES.includes(e.target_type));
+      } else if (modeIs("incident")) {
+        const keys = new Set(Object.keys(impactNodes));
+        if (impactSourceKey) keys.add(impactSourceKey);
+        edges.forEach(e => {
+          const ek = e.source_type + ":" + e.source_id + "->" + e.target_type + ":" + e.target_id;
+          if (impactEdges.has(ek)) { keys.add(nkey(e.source_type, e.source_id)); keys.add(nkey(e.target_type, e.target_id)); }
+        });
+        nodes = nodes.filter(n => keys.has(nkey(n.type, n.id)));
+        edges = edges.filter(e => keys.has(nkey(e.source_type, e.source_id)) && keys.has(nkey(e.target_type, e.target_id)));
+        return { nodes, edges };
+      }
+      // Giới hạn theo đối tượng trung tâm + phạm vi liên kết (client-side cho đồ thị nhỏ).
+      if (focusKey) {
+        const inScope = neighborSet(fullGraphData, focusKey, Number(depthSel.value) || 1);
+        nodes = nodes.filter(n => inScope.has(nkey(n.type, n.id)));
+        edges = edges.filter(e => inScope.has(nkey(e.source_type, e.source_id)) && inScope.has(nkey(e.target_type, e.target_id)));
       }
       return { nodes, edges };
     }
 
-    function computeLayout(nodes) {
-      const byLane = {};
-      nodes.forEach(n => { const lk = TYPE_LANE[n.type] || "output"; (byLane[lk] = byLane[lk] || []).push(n); });
-      Object.keys(byLane).forEach(k => byLane[k].sort((a, b) => (a.name || a.code || "").localeCompare(b.name || b.code || "")));
-      const pos = {}; const lanes = [];
-      const padX = 40, padY = 46, laneGap = 24, headerH = 34, nodeGap = 16;
-      const busKeys = BUSINESS_LANES.filter(k => byLane[k]);
-      const sysKeys = SYSTEM_LANES.filter(k => byLane[k]);
-      let x = padX, maxBus = 0;
-      busKeys.forEach(lk => {
-        const ln = byLane[lk]; maxBus = Math.max(maxBus, ln.length);
-        ln.forEach((n, i) => { pos[nkey(n.type, n.id)] = { x: x + LANE_W / 2, y: padY + headerH + i * (NODE_H + nodeGap) + NODE_H / 2 }; });
-        lanes.push({ label: LANE_LABELS[lk] || lk, x: x + LANE_W / 2, headerY: padY + headerH - 16 });
-        x += LANE_W + laneGap;
+    // Thứ tự công đoạn theo quan hệ phụ thuộc (không theo tên).
+    function processOrder(nodes, edges) {
+      const procNodes = nodes.filter(n => n.type === "process");
+      const keys = new Set(procNodes.map(n => nkey(n.type, n.id)));
+      const adj = {}, indeg = {};
+      keys.forEach(k => { adj[k] = []; indeg[k] = 0; });
+      edges.forEach(e => {
+        if (e.kind === "production_dependency" && e.source_type === "process" && e.target_type === "process") {
+          const s = nkey(e.source_type, e.source_id), t = nkey(e.target_type, e.target_id);
+          if (keys.has(s) && keys.has(t)) { adj[s].push(t); indeg[t]++; }
+        }
       });
-      const busBottom = padY + headerH + maxBus * (NODE_H + nodeGap);
-      const sysTop = busBottom + (sysKeys.length ? 70 : 0);
-      let sx = padX, maxSys = 0;
-      sysKeys.forEach(lk => {
-        const ln = byLane[lk]; maxSys = Math.max(maxSys, ln.length);
-        ln.forEach((n, i) => { pos[nkey(n.type, n.id)] = { x: sx + LANE_W / 2, y: sysTop + 30 + i * (NODE_H + nodeGap) + NODE_H / 2 }; });
-        lanes.push({ label: LANE_LABELS[lk] || lk, x: sx + LANE_W / 2, headerY: sysTop + 16 });
-        sx += LANE_W + laneGap;
+      const order = [];
+      const q = Array.from(keys).filter(k => indeg[k] === 0).sort((a, b) => a.localeCompare(b));
+      while (q.length) {
+        const k = q.shift(); order.push(k);
+        adj[k].sort((a, b) => a.localeCompare(b));
+        adj[k].forEach(m => { if (--indeg[m] === 0) q.push(m); });
+      }
+      return order.length ? order : Array.from(keys);
+    }
+
+    function computeLayout(nodes, edges) {
+      const pos = {};
+      const colW = 230, rowH = 96;
+      const order = processOrder(nodes, edges);
+      const idx = {}; order.forEach((k, i) => idx[k] = i);
+      const nCol = Math.max(order.length, 1);
+      const byType = {};
+      nodes.forEach(n => { (byType[n.type] = byType[n.type] || []).push(n); });
+      (byType.process || []).forEach(n => { const i = idx[nkey(n.type, n.id)] != null ? idx[nkey(n.type, n.id)] : 0; pos[nkey(n.type, n.id)] = { x: 90 + i * colW, y: 150 }; });
+      // Máy gắn dưới công đoạn liên quan.
+      (byType.machine || []).forEach(n => {
+        const e = edges.find(ed => ed.source_type === "machine" && ed.source_id === n.id && ed.target_type === "process");
+        const i = e ? (idx[nkey("process", e.target_id)] != null ? idx[nkey("process", e.target_id)] : 0) : 0;
+        pos[nkey(n.type, n.id)] = { x: 90 + i * colW, y: 270 };
       });
-      const w = Math.max(x, sx, 320) + padX;
-      const h = (sysKeys.length ? sysTop + 30 + maxSys * (NODE_H + nodeGap) : busBottom) + 30;
-      return { pos, lanes, w, h, hasSystem: sysKeys.length > 0, sysTop };
+      // Vật tư bên trái.
+      (byType.material || []).forEach((n, i) => { pos[nkey(n.type, n.id)] = { x: 90 - colW, y: 150 + i * rowH }; });
+      // Sản phẩm/lệnh/lô bên phải.
+      (["product", "order", "lot"].forEach(t => (byType[t] || []).forEach((n, i) => { pos[nkey(n.type, n.id)] = { x: 90 + nCol * colW, y: 130 + i * rowH }; })));
+      // Chuyền ở trên, bộ phận ở góc.
+      (byType.line || []).forEach((n, i) => { pos[nkey(n.type, n.id)] = { x: 90 + (nCol / 2) * colW, y: 40 }; });
+      (byType.department || []).forEach((n, i) => { pos[nkey(n.type, n.id)] = { x: 90 + (nCol + 1) * colW, y: 40 + i * 70 }; });
+      // Lớp hệ thống ở vùng riêng phía dưới.
+      (["source", "dataset", "field"].forEach(t => (byType[t] || []).forEach((n, i) => { pos[nkey(n.type, n.id)] = { x: 90 + i * colW, y: 400 }; })));
+      const w = Math.max(90 + (nCol + 2) * colW, 500);
+      const h = 470;
+      return { pos, w, h };
     }
 
     function showTip(ev, text) {
@@ -1398,18 +1468,36 @@
     }
     function hideTip() { tip.classList.remove("visible"); }
 
+    function applyView() { const svg = wrap.querySelector("svg"); if (svg) svg.setAttribute("viewBox", view.x + " " + view.y + " " + view.w + " " + view.h); }
+
     function draw() {
       wrap.textContent = ""; wrap.appendChild(tip);
-      const { nodes, edges } = filtered();
-      if (!nodes.length) {
-        wrap.appendChild(emptyBox("map", "Không có dữ liệu để vẽ", "Thêm danh mục, thiết lập quan hệ hoặc nạp dữ liệu mô phỏng."));
+      updateSummary();
+      if (modeIs("incident")) {
+        if (!incident) {
+          wrap.appendChild(emptyBox("incidents", "Chọn một sự cố", "Chọn sự cố ở khung phía trên để xem ảnh hưởng đã phân tích."));
+          detail.textContent = "";
+          return;
+        }
+      } else if (!focusKey && !showAll && !(impactNodes && Object.keys(impactNodes).length)) {
+        wrap.appendChild(emptyBox("search", "Chọn một máy hoặc công đoạn để bắt đầu",
+          "Tìm theo mã/tên ở ô tìm kiếm để tập trung vào đối tượng đó và các liên kết trực tiếp.",
+          h("button", { class: "btn btn-primary btn-sm", text: "Xem tổng quan toàn chuyền", onclick: () => { showAll = true; focusKey = null; draw(); } })));
+        detail.textContent = "";
         return;
       }
-      const layout = computeLayout(nodes);
-      const pos = layout.pos;
-      bbox = { w: layout.w, h: layout.h };
+      const { nodes, edges } = filteredData();
+      if (!nodes.length) {
+        wrap.appendChild(emptyBox("map", "Không có dữ liệu để vẽ", "Nạp dữ liệu mô phỏng hoặc thêm danh mục/quan hệ."));
+        return;
+      }
+      const layout = computeLayout(nodes, edges);
+      contentBox = { w: layout.w, h: layout.h };
+      if (view.w <= 0) { view.x = 0; view.y = 0; view.w = layout.w; view.h = layout.h; }
 
-      const svg = hNS("svg", { class: "graph-svg", viewBox: "0 0 " + layout.w + " " + layout.h });
+      if (listMode) { renderListMode(wrap, nodes, edges); return; }
+
+      const svg = hNS("svg", { class: "graph-svg", viewBox: view.x + " " + view.y + " " + view.w + " " + view.h });
       const defs = hNS("defs", {});
       Object.keys(EDGE_STYLE).forEach(k => {
         const mk = hNS("marker", { id: "arrow-" + k, viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 6, markerHeight: 6, orient: "auto" });
@@ -1418,34 +1506,27 @@
       });
       svg.appendChild(defs);
 
-      const vp = hNS("g", { transform: "translate(" + view.tx + "," + view.ty + ") scale(" + view.scale + ")" });
-      if (layout.hasSystem) {
-        const rt = hNS("text", { class: "region-title", x: 40, y: layout.sysTop - 26, "text-anchor": "start" });
-        rt.textContent = "Logic hệ thống dữ liệu";
-        vp.appendChild(rt);
-      }
-      layout.lanes.forEach(lane => {
-        const t = hNS("text", { class: "lane-title", x: lane.x, y: lane.headerY, "text-anchor": "middle" });
-        t.textContent = lane.label;
-        vp.appendChild(t);
-      });
-
+      const pos = layout.pos;
       const nodeById = {};
       nodes.forEach(n => { nodeById[nkey(n.type, n.id)] = n; });
-      const edgeKeyOf = (e) => e.source_type + ":" + e.source_id + "->" + e.target_type + ":" + e.target_id;
-      edgeEls = [];
       edges.forEach(e => {
         const a = pos[nkey(e.source_type, e.source_id)], b = pos[nkey(e.target_type, e.target_id)];
         if (!a || !b) return;
         const st = EDGE_STYLE[e.kind] || EDGE_STYLE.production_dependency;
-        const p = hNS("path", { class: "graph-edge", d: edgePath(a, b), fill: "none", stroke: st.color, "stroke-width": st.width, "stroke-dasharray": st.dash || "none", "marker-end": "url(#arrow-" + e.kind + ")" });
-        p.addEventListener("mousemove", (ev) => showTip(ev, (nodeById[nkey(e.source_type, e.source_id)] || {}).name + " → " + (nodeById[nkey(e.target_type, e.target_id)] || {}).name + ": " + edgeLabel(e.kind) + (e.label ? " (" + e.label + ")" : "")));
+        const d = edgePath(a, b);
+        const p = hNS("path", { class: "graph-edge", d: d, fill: "none", stroke: st.color, "stroke-width": st.width, "stroke-dasharray": st.dash || "none", "marker-end": "url(#arrow-" + e.kind + ")" });
+        const src = nodeById[nkey(e.source_type, e.source_id)] || {};
+        const tgt = nodeById[nkey(e.target_type, e.target_id)] || {};
+        const edgeText = (EDGE_MEANING[e.kind] || (() => ""))((src.name || src.code || "?"), (tgt.name || tgt.code || "?")) + (e.label ? " (" + e.label + ")" : "");
+        const ek = e.source_type + ":" + e.source_id + "->" + e.target_type + ":" + e.target_id;
+        if (impactEdges.has(ek)) { p.setAttribute("stroke-width", "4"); p.setAttribute("stroke", "#c62828"); }
+        p.setAttribute("aria-label", edgeText);
+        p.addEventListener("mousemove", (ev) => showTip(ev, edgeText));
         p.addEventListener("mouseleave", hideTip);
-        vp.appendChild(p);
-        edgeEls.push({ el: p, key: edgeKeyOf(e), impacted: impactEdges.has(edgeKeyOf(e)) });
+        p.addEventListener("click", () => selectEdge(e, src, tgt));
+        svg.appendChild(p);
       });
 
-      nodeEls = [];
       nodes.forEach(n => {
         const p = pos[nkey(n.type, n.id)];
         const g = hNS("g", { class: "graph-node", transform: "translate(" + (p.x - NODE_W / 2) + "," + (p.y - NODE_H / 2) + ")" });
@@ -1468,97 +1549,112 @@
           b.appendChild(hNS("title", {})).textContent = "Dữ liệu mô phỏng";
           g.appendChild(b);
         }
-        g.addEventListener("click", () => selectNode(nkey(n.type, n.id)));
-        g.addEventListener("keydown", (ev) => { if (ev.key === "Enter") { ev.preventDefault(); selectNode(nkey(n.type, n.id)); } });
+        const key = nkey(n.type, n.id);
+        if (impactNodes[key]) { rect.setAttribute("stroke", IMPACT_COLOR[impactNodes[key].impact_type] || "#c62828"); rect.setAttribute("stroke-width", "3"); }
+        if (impactSourceKey === key) { rect.setAttribute("stroke-width", "4"); }
+        g.addEventListener("click", () => selectNode(key));
+        g.addEventListener("keydown", (ev) => { if (ev.key === "Enter") { ev.preventDefault(); selectNode(key); } });
         g.addEventListener("mousemove", (ev) => showTip(ev, nodeLabel(n.type) + ": " + (n.name || "") + (n.code ? " (" + n.code + ")" : "")));
         g.addEventListener("mouseleave", hideTip);
-        vp.appendChild(g);
-        nodeEls.push({ key: nkey(n.type, n.id), el: g });
+        svg.appendChild(g);
       });
 
-      svg.appendChild(vp);
       wrap.appendChild(svg);
-      svgEl = svg; vpEl = vp;
-
-      attachPanZoom(svg, vp);
-      applyHighlight();
-      if (searchSet && searchSet.size) centerOnFirstSearch(pos);
+      attachPanZoom(svg);
     }
 
-    function attachPanZoom(svg, vp) {
+    function renderListMode(container, nodes, edges) {
+      container.appendChild(h("h3", { text: "Danh sách liên kết (" + nodes.length + " đối tượng)" }));
+      const byType = {};
+      nodes.forEach(n => { (byType[n.type] = byType[n.type] || []).push(n); });
+      Object.keys(byType).forEach(t => {
+        container.appendChild(h("h4", { text: nodeLabel(t) + " (" + byType[t].length + ")" }));
+        const ul = h("ul", { class: "path-list" });
+        byType[t].forEach(n => {
+          const li = h("li", {}, [h("div", { text: (n.name || "") + (n.code ? " (" + n.code + ")" : "") })]);
+          const rels = edges.filter(e => (e.source_type === n.type && e.source_id === n.id) || (e.target_type === n.type && e.target_id === n.id));
+          rels.forEach(e => {
+            const other = (e.source_type === n.type && e.source_id === n.id) ? nodeNameById(e.target_type, e.target_id, nodes) : nodeNameById(e.source_type, e.source_id, nodes);
+            li.appendChild(h("div", { class: "cell-sub", text: edgeLabel(e.kind) + " — " + other }));
+          });
+          li.appendChild(h("button", { class: "btn btn-ghost btn-sm", text: "Xem trên sơ đồ", onclick: () => { listMode = false; focusKey = nkey(n.type, n.id); selectNode(focusKey); } }));
+          ul.appendChild(li);
+        });
+        container.appendChild(ul);
+      });
+    }
+    function nodeNameById(t, id, nodes) {
+      const n = nodes.find(x => x.type === t && x.id === id);
+      return n ? ((n.name || n.code || "") + " (" + nodeLabel(n.type) + ")") : (t + " #" + id);
+    }
+
+    function attachPanZoom(svg) {
       let drag = null;
       svg.addEventListener("pointerdown", (e) => {
-        if (e.target === svg) { drag = { x: e.clientX, y: e.clientY, tx: view.tx, ty: view.ty }; svg.setPointerCapture(e.pointerId); }
+        if (e.target === svg) { drag = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y }; svg.setPointerCapture(e.pointerId); }
       });
       svg.addEventListener("pointermove", (e) => {
         if (!drag) return;
-        view.tx = drag.tx + (e.clientX - drag.x); view.ty = drag.ty + (e.clientY - drag.y);
-        vp.setAttribute("transform", "translate(" + view.tx + "," + view.ty + ") scale(" + view.scale + ")");
+        const rect = svg.getBoundingClientRect();
+        const kx = view.w / rect.width;
+        view.x = drag.vx - (e.clientX - drag.x) * kx;
+        view.y = drag.vy - (e.clientY - drag.y) * kx;
+        applyView();
       });
       svg.addEventListener("pointerup", () => { drag = null; });
       svg.addEventListener("pointercancel", () => { drag = null; });
       svg.addEventListener("wheel", (e) => {
         e.preventDefault();
-        zoomBy(e.deltaY < 0 ? 1.15 : 0.87);
+        zoomAt(e.deltaY < 0 ? 1.2 : 0.83, e.clientX, e.clientY);
       }, { passive: false });
     }
+    function zoomAt(f, clientX, clientY) {
+      const svg = wrap.querySelector("svg"); if (!svg) return;
+      const rect = svg.getBoundingClientRect();
+      const px = (clientX - rect.left) / rect.width;
+      const py = (clientY - rect.top) / rect.height;
+      const cx = view.x + px * view.w;
+      const cy = view.y + py * view.h;
+      const minW = contentBox.w / 4, maxW = contentBox.w * 1.5;
+      let newW = view.w / f;
+      if (newW < minW) newW = minW;
+      if (newW > maxW) newW = maxW;
+      const newH = newW * (view.h / view.w);
+      view.w = newW; view.h = newH;
+      view.x = cx - px * newW;
+      view.y = cy - py * newH;
+      clampView();
+      applyView();
+    }
     function zoomBy(f) {
-      view.scale = Math.max(0.15, Math.min(4, view.scale * f));
-      if (vpEl) vpEl.setAttribute("transform", "translate(" + view.tx + "," + view.ty + ") scale(" + view.scale + ")");
+      const svg = wrap.querySelector("svg"); if (!svg) return;
+      const rect = svg.getBoundingClientRect();
+      zoomAt(f, rect.left + rect.width / 2, rect.top + rect.height / 2);
+    }
+    function clampView() {
+      if (view.w > contentBox.w * 1.5) { view.w = contentBox.w * 1.5; view.h = view.w * (contentBox.h / contentBox.w); }
+      if (view.x < -contentBox.w * 0.2) view.x = -contentBox.w * 0.2;
+      if (view.y < -contentBox.h * 0.2) view.y = -contentBox.h * 0.2;
+      if (view.x > contentBox.w * 1.2) view.x = contentBox.w * 1.2;
+      if (view.y > contentBox.h * 1.2) view.y = contentBox.h * 1.2;
     }
     function fitView() {
-      const cw = wrap.clientWidth || 800, ch = wrap.clientHeight || 480;
-      const s = Math.min((cw - 60) / bbox.w, (ch - 60) / bbox.h);
-      view.scale = Math.max(0.05, Math.min(2, s));
-      view.tx = (cw - bbox.w * view.scale) / 2;
-      view.ty = (ch - bbox.h * view.scale) / 2;
-      if (vpEl) vpEl.setAttribute("transform", "translate(" + view.tx + "," + view.ty + ") scale(" + view.scale + ")");
+      view.x = 0; view.y = 0; view.w = contentBox.w; view.h = contentBox.h;
+      applyView();
     }
-    function resetAll() {
+    function deselect() {
       search.value = ""; searchTerm = "";
-      selectedKey = null; highlightSet = null; searchSet = null; impactNodes = {}; impactEdges = new Set();
-      modeSel.value = "business";
-      view.tx = 0; view.ty = 0; view.scale = 1;
+      focusKey = null; selectedEdge = null; showAll = false; impactNodes = {}; impactEdges = new Set(); impactSourceKey = null;
+      detail.textContent = "";
+      searchList.textContent = "";
       draw();
     }
 
-    function applyHighlight() {
-      nodeEls.forEach(ne => {
-        const g = ne.el;
-        const hasSearch = searchSet && searchSet.size;
-        const hasSel = highlightSet && highlightSet.size;
-        let dim = false, outline = false, impactStroke = null;
-        if (impactNodes[ne.key]) impactStroke = IMPACT_COLOR[impactNodes[ne.key].impact_type] || "#c62828";
-        if (hasSel) { dim = !highlightSet.has(ne.key); }
-        else if (hasSearch) { outline = searchSet.has(ne.key); }
-        g.classList.toggle("dimmed", dim);
-        const rect = g.querySelector("rect");
-        if (rect) {
-          if (impactStroke) rect.setAttribute("stroke", impactStroke);
-          if (outline) { rect.setAttribute("stroke-width", "3"); }
-        }
-      });
-      edgeEls.forEach(ee => {
-        if (impactNodes && Object.keys(impactNodes).length) ee.el.classList.toggle("highlight", ee.impacted);
-        else ee.el.classList.remove("highlight");
-      });
-    }
-
-    function centerOnFirstSearch(pos) {
-      const first = Array.from(searchSet)[0];
-      const p = pos[first];
-      if (!p) return;
-      const cw = wrap.clientWidth || 800, ch = wrap.clientHeight || 480;
-      view.tx = cw / 2 - p.x * view.scale;
-      view.ty = ch / 2 - p.y * view.scale;
-      if (vpEl) vpEl.setAttribute("transform", "translate(" + view.tx + "," + view.ty + ") scale(" + view.scale + ")");
-    }
-
-    function neighborSet(startKey, depth) {
+    function neighborSet(data, startKey, depth) {
       const adj = {};
       const keys = new Set();
-      graphData.nodes.forEach(n => keys.add(nkey(n.type, n.id)));
-      graphData.edges.forEach(e => {
+      data.nodes.forEach(n => keys.add(nkey(n.type, n.id)));
+      data.edges.forEach(e => {
         const s = nkey(e.source_type, e.source_id), t = nkey(e.target_type, e.target_id);
         if (!keys.has(s) || !keys.has(t)) return;
         (adj[s] = adj[s] || []).push(t);
@@ -1575,80 +1671,161 @@
     }
 
     function selectNode(nk) {
-      selectedKey = nk;
-      highlightSet = neighborSet(nk, Number(depthSel.value) || 2);
-      if (vpEl) applyHighlight();
+      focusKey = nk;
+      selectedEdge = null;
+      showAll = false;
+      draw();
+      fitView();
       renderDetail(nk);
     }
 
-    function nodeById(t, id) { return graphData.nodes.find(n => n.type === t && n.id === id); }
-    function otherName(e, outgoing) {
-      const n = outgoing ? nodeById(e.target_type, e.target_id) : nodeById(e.source_type, e.source_id);
-      return n ? ((n.name || n.code || "") + " (" + nodeLabel(n.type) + ")") : ((outgoing ? e.target_type : e.source_type) + " #" + (outgoing ? e.target_id : e.source_id));
+    function selectEdge(e, src, tgt) {
+      selectedEdge = e;
+      detail.textContent = "";
+      detail.appendChild(h("div", { class: "card-title" }, [h("span", { text: edgeLabel(e.kind) })]));
+      detail.appendChild(h("div", { text: (EDGE_MEANING[e.kind] || (() => ""))((src.name || src.code || "?"), (tgt.name || tgt.code || "?")) }));
+      detail.appendChild(h("div", { class: "cell-sub", text: "Từ: " + (src.name || "") + (src.code ? " (" + src.code + ")" : "") }));
+      detail.appendChild(h("div", { class: "cell-sub", text: "Đến: " + (tgt.name || "") + (tgt.code ? " (" + tgt.code + ")" : "") }));
+      if (e.label) detail.appendChild(h("div", { class: "cell-sub", text: "Ghi chú: " + e.label }));
+      if (e.description) detail.appendChild(h("div", { class: "cell-sub", text: e.description }));
+      detail.appendChild(h("div", { class: "cell-sub", text: "Nguồn xác nhận: " + (e.source_confirmation || "chưa khai báo") }));
+      if (e.valid_from) detail.appendChild(h("div", { class: "cell-sub", text: "Hiệu lực từ: " + fmt(e.valid_from) }));
+      if (e.valid_to) detail.appendChild(h("div", { class: "cell-sub", text: "Hiệu lực đến: " + fmt(e.valid_to) }));
+      detail.appendChild(h("div", { class: "cell-sub", text: "Loại dữ liệu: " + (e.is_simulated ? "Mô phỏng" : "Vận hành") }));
     }
+
+    function nodeById(t, id) { return fullGraphData.nodes.find(n => n.type === t && n.id === id); }
 
     function renderDetail(nk) {
       detail.textContent = "";
       const parts = nk.split(":"); const nt = parts[0], nid = Number(parts[1]);
       const node = nodeById(nt, nid);
-      if (!node) { detail.appendChild(h("p", { class: "cell-sub", text: "Không tìm thấy node." })); return; }
+      if (!node) { detail.appendChild(h("p", { class: "cell-sub", text: "Không tìm thấy đối tượng." })); return; }
       detail.appendChild(h("div", { class: "card-title" }, [h("span", { text: (node.name || node.code || "") + " — " + nodeLabel(node.type) }), node.is_simulated ? badge("Mô phỏng", "amber") : null]));
       if (node.code) detail.appendChild(h("div", { class: "cell-sub", text: "Mã: " + node.code }));
-      const out = graphData.edges.filter(e => e.source_type === nt && e.source_id === nid);
-      const inc = graphData.edges.filter(e => e.target_type === nt && e.target_id === nid);
-      if (!out.length && !inc.length) { detail.appendChild(h("p", { class: "cell-sub", text: "Không có quan hệ nào." })); return; }
-      renderRelGroup(detail, "Đi ra", out, true);
-      renderRelGroup(detail, "Đi vào", inc, false);
+      const edges = fullGraphData.edges;
+      const dependsOn = edges.filter(e => e.target_type === nt && e.target_id === nid && e.kind === "production_dependency");
+      const dependedBy = edges.filter(e => e.source_type === nt && e.source_id === nid && e.kind === "production_dependency");
+      const responsible = edges.filter(e => e.target_type === nt && e.target_id === nid && e.kind === "department_responsibility");
+      const dataRel = edges.filter(e => (e.source_type === nt && e.source_id === nid || e.target_type === nt && e.target_id === nid) && (e.kind === "data_mapping" || e.kind === "data_flow"));
+      if (!dependsOn.length && !dependedBy.length && !responsible.length && !dataRel.length) { detail.appendChild(h("p", { class: "cell-sub", text: "Chưa có liên kết nào." })); return; }
+      relGroup(detail, "Phụ thuộc vào", dependsOn, (e) => e.source_type, (e) => e.source_id, node);
+      relGroup(detail, "Đối tượng phụ thuộc vào đối tượng này", dependedBy, (e) => e.target_type, (e) => e.target_id, node);
+      relGroup(detail, "Bộ phận phụ trách", responsible, (e) => e.source_type, (e) => e.source_id, node);
+      relGroup(detail, "Dữ liệu liên quan", dataRel, (e) => (e.source_type === nt && e.source_id === nid) ? e.target_type : e.source_type, (e) => (e.source_type === nt && e.source_id === nid) ? e.target_id : e.source_id, node);
     }
 
-    function renderRelGroup(container, title, edges, outgoing) {
+    function relGroup(container, title, edges, otherType, otherId, selected) {
       if (!edges.length) return;
       container.appendChild(h("h4", { text: title + " (" + edges.length + ")", style: "margin-top:12px;" }));
       const ul = h("ul", { class: "path-list" });
       edges.forEach(e => {
-        const li = h("li", {}, [h("div", {}, [
-          h("span", { class: "hop", text: edgeLabel(e.kind) + (e.label ? " — " + e.label : "") }),
-        ]), h("div", { text: (outgoing ? "→ " : "← ") + otherName(e, outgoing) })]);
-        const actions = h("div", { style: "margin-top:6px;display:flex;gap:8px;" });
-        actions.appendChild(h("button", { class: "btn btn-sm btn-secondary", text: "Sửa", onclick: () => editEdge(e) }));
-        actions.appendChild(h("button", { class: "btn btn-sm btn-ghost", text: "Xóa", onclick: () => deleteEdge(e) }));
-        li.appendChild(actions);
+        const ot = otherType(e), oi = otherId(e);
+        const other = nodeById(ot, oi);
+        const src = (e.source_type === selected.type && e.source_id === selected.id) ? selected : other;
+        const tgt = (e.target_type === selected.type && e.target_id === selected.id) ? selected : other;
+        const meaning = (EDGE_MEANING[e.kind] || (() => ""))((src ? (src.name || src.code || "?") : "?"), (tgt ? (tgt.name || tgt.code || "?") : "?"));
+        const li = h("li", {}, [
+          h("div", { class: "hop", text: edgeLabel(e.kind) + (e.label ? " — " + e.label : "") }),
+          h("div", { text: other ? ((other.name || other.code || "") + " (" + nodeLabel(other.type) + ")") : (ot + " #" + oi) }),
+          h("div", { class: "cell-sub", text: meaning }),
+          h("button", { class: "btn btn-ghost btn-sm", text: "Xem trên sơ đồ", onclick: () => selectNode(ot + ":" + oi) }),
+        ]);
         ul.appendChild(li);
       });
       container.appendChild(ul);
     }
 
-    function editEdge(e) {
-      const fields = [
-        { name: "label", label: "Mô tả quan hệ" },
-        { name: "description", label: "Ghi chú", type: "textarea" },
-        { name: "source_confirmation", label: "Nguồn xác nhận" },
-        { name: "is_simulated", label: "Dữ liệu mô phỏng", type: "checkbox" },
-      ];
-      const fb = formBuilder(fields, async (data, s) => {
-        fb.setSubmitting(true);
-        try {
-          await api("/api/graph/edges/" + e.id, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) });
-          closeModal(); toast("Đã cập nhật quan hệ."); loadGraph();
-        } catch (err) { toast(err.message, "error"); fb.setSubmitting(false); }
-      }, { label: e.label, description: e.description, source_confirmation: e.source_confirmation, is_simulated: e.is_simulated });
-      openModal("Sửa quan hệ", fb.form);
+    function updateSummary() {
+      if (modeIs("incident")) {
+        if (incident) summary.textContent = "Sự cố " + incident.code + " — " + incident.title;
+        else summary.textContent = "Chọn một sự cố để xem ảnh hưởng đã phân tích.";
+        return;
+      }
+      if (focusKey) {
+        const parts = focusKey.split(":"); const n = nodeById(parts[0], Number(parts[1]));
+        if (n) summary.textContent = "Đang xem " + (n.name || n.code || "") + " — " + nodeLabel(n.type) + ", cùng các quan hệ trực tiếp đã khai báo.";
+        else summary.textContent = "Chọn một máy hoặc công đoạn để bắt đầu.";
+      } else {
+        summary.textContent = "Chọn một máy hoặc công đoạn để bắt đầu.";
+      }
     }
 
-    function deleteEdge(e) {
-      if (!confirm("Xóa quan hệ '" + edgeLabel(e.kind) + "'?")) return;
-      api("/api/graph/edges/" + e.id, { method: "DELETE" })
-        .then(() => { toast("Đã xóa."); selectedKey = null; highlightSet = null; loadGraph(); })
-        .catch(err => toast(err.message, "error"));
+    function updateSearch() {
+      const term = searchTerm;
+      searchList.textContent = "";
+      if (!term) { searchList.style.display = "none"; return; }
+      const matches = fullGraphData.nodes.filter(n => (n.name || "").toLowerCase().includes(term) || (n.code || "").toLowerCase().includes(term)).slice(0, 8);
+      if (!matches.length) { searchList.appendChild(h("div", { class: "cell-sub", text: "Không có kết quả." })); searchList.style.display = "block"; return; }
+      matches.forEach(n => {
+        searchList.appendChild(h("div", { class: "combo-option", onclick: () => { search.value = (n.code || n.name || ""); searchList.textContent = ""; searchList.style.display = "none"; searchTerm = ""; focusKey = nkey(n.type, n.id); draw(); renderDetail(focusKey); } }, [
+          h("span", { class: "co-code", text: n.code || "" }), (n.name || "") + " (" + nodeLabel(n.type) + ")",
+        ]));
+      });
+      searchList.style.display = "block";
+    }
+
+    // ---- Góc nhìn "Theo sự cố": chỉ đọc, không tự tạo run. ----
+    async function loadIncident() {
+      const id = incSel.value;
+      incident = null; runSel.textContent = ""; impactNodes = {}; impactEdges = new Set(); impactSourceKey = null;
+      incidentInfo.textContent = "";
+      if (!id) { draw(); return; }
+      try {
+        const d = await api("/api/incidents/" + id);
+        if (!ctx.isCurrent()) return;
+        incident = d.data;
+        incidentInfo.textContent = "Đối tượng: " + (incident.source_object_type || "?") + " #" + (incident.source_object_id || "?") +
+          " · thời điểm " + (incident.start_time ? fmt(incident.start_time) : "?") + " · trạng thái " + incident.status;
+        impactSourceKey = incident.source_object_type + ":" + incident.source_object_id;
+        const runs = await api("/api/analysis/runs?source_type=INCIDENT&source_id=" + id + "&page_size=20");
+        if (!ctx.isCurrent()) return;
+        runSel.textContent = "";
+        runSel.appendChild(h("option", { value: "", text: "-- Chọn lần phân tích --" }));
+        runs.data.items.forEach(r => runSel.appendChild(h("option", { value: r.id, text: "#" + r.id + " — " + fmt(r.run_at) })));
+        if (runs.data.items.length) {
+          runSel.value = runs.data.items[0].id;
+          loadRun(runs.data.items[0].id);
+        } else {
+          incidentInfo.textContent += " · Chưa có kết quả phân tích cho sự cố này.";
+          draw();
+        }
+      } catch (e) { if (ctx.isCurrent()) toast(e.message, "error"); }
+    }
+
+    async function loadRun(runId) {
+      impactNodes = {}; impactEdges = new Set();
+      try {
+        const d = await api("/api/analysis/runs/" + runId);
+        if (!ctx.isCurrent()) return;
+        const r = d.data;
+        (r.impacts || []).forEach(imp => { impactNodes[nkey(imp.node_type, imp.node_id)] = { impact_type: imp.impact_type }; });
+        (r.impacts || []).forEach(imp => {
+          (imp.path || []).forEach(s => { impactEdges.add(s.from_type + ":" + s.from_id + "->" + s.to_type + ":" + s.to_id); });
+        });
+        draw();
+      } catch (e) { if (ctx.isCurrent()) toast(e.message, "error"); }
+    }
+
+    async function runAnalysisForIncident() {
+      const id = incSel.value;
+      if (!id) { toast("Chọn một sự cố trước.", "error"); return; }
+      runBtn.disabled = true; runBtn.textContent = "Đang chạy...";
+      try {
+        await api("/api/analysis/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ incident_id: Number(id), max_depth: Number(depthSel.value) || 2 }) });
+        toast("Đã chạy phân tích.");
+        await loadIncident();
+      } catch (e) { toast(e.message, "error"); }
+      runBtn.disabled = false; runBtn.textContent = "Chạy phân tích";
     }
 
     async function edgeForm() {
-      const nodeOpts = graphData.nodes.map(n => ({ value: n.type + ":" + n.id, label: (n.name || n.code || "") + " (" + nodeLabel(n.type) + ")", code: n.type }));
+      const nodeOpts = fullGraphData.nodes.map(n => ({ value: n.type + ":" + n.id, label: (n.name || n.code || "") + " (" + nodeLabel(n.type) + ")", code: n.type }));
       if (!nodeOpts.length) { toast("Chưa có node để liên kết.", "error"); return; }
       const fields = [
-        { name: "source", label: "Node nguồn", type: "select", options: nodeOpts, required: true },
-        { name: "target", label: "Node đích", type: "select", options: nodeOpts, required: true },
         { name: "kind", label: "Loại quan hệ", type: "select", options: Object.keys(EDGE_STYLE).map(k => ({ value: k, label: edgeLabel(k) })), required: true },
+        { name: "source", label: "Từ (đối tượng nguồn)", type: "select", options: nodeOpts, required: true },
+        { name: "target", label: "Đến (đối tượng đích)", type: "select", options: nodeOpts, required: true },
         { name: "label", label: "Mô tả quan hệ" },
       ];
       const fb = formBuilder(fields, async (data, s) => {
@@ -1663,36 +1840,19 @@
     }
 
     let searchTerm = "";
-    modeSel.addEventListener("change", () => { impactNodes = {}; impactEdges = new Set(); selectedKey = null; highlightSet = null; draw(); });
-    depthSel.addEventListener("change", () => { if (selectedKey) { highlightSet = neighborSet(selectedKey, Number(depthSel.value) || 2); if (vpEl) applyHighlight(); } });
-    incSel.addEventListener("change", loadImpact);
-    let t; search.addEventListener("input", () => { clearTimeout(t); t = setTimeout(() => { searchTerm = search.value.trim().toLowerCase(); updateSearch(); }, 300); });
-
-    function updateSearch() {
-      searchSet = null;
-      if (!searchTerm) { draw(); return; }
-      searchSet = new Set();
-      graphData.nodes.forEach(n => {
-        if ((n.name || "").toLowerCase().includes(searchTerm) || (n.code || "").toLowerCase().includes(searchTerm)) searchSet.add(nkey(n.type, n.id));
-      });
+    modeSel.addEventListener("change", () => {
+      incidentCard.style.display = modeIs("incident") ? "" : "none";
+      if (!modeIs("incident")) { incident = null; incidentInfo.textContent = ""; }
+      impactNodes = {}; impactEdges = new Set(); impactSourceKey = null; focusKey = null; detail.textContent = "";
       draw();
-    }
-
-    async function loadImpact() {
-      const id = incSel.value;
-      impactNodes = {}; impactEdges = new Set();
-      if (!id) { draw(); return; }
-      try {
-        const d = await api("/api/analysis/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ incident_id: Number(id), max_depth: Number(depthSel.value) || 2 }) });
-        if (!ctx.isCurrent()) return;
-        const impacts = d.data.impacts || [];
-        impacts.forEach(imp => { impactNodes[nkey(imp.node_type, imp.node_id)] = { impact_type: imp.impact_type }; });
-        impacts.forEach(imp => {
-          (imp.path || []).forEach(s => { impactEdges.add(s.from_type + ":" + s.from_id + "->" + s.to_type + ":" + s.to_id); });
-        });
-        draw();
-      } catch (e) { if (ctx.isCurrent()) toast(e.message, "error"); }
-    }
+      fitView();
+    });
+    depthSel.addEventListener("change", () => { if (focusKey || modeIs("incident")) { draw(); fitView(); } });
+    incSel.addEventListener("change", loadIncident);
+    runSel.addEventListener("change", () => { if (runSel.value) loadRun(runSel.value); });
+    let t; search.addEventListener("input", () => { clearTimeout(t); t = setTimeout(() => { searchTerm = search.value.trim().toLowerCase(); updateSearch(); }, 250); });
+    search.addEventListener("focus", () => { if (search.value) { searchTerm = search.value.trim().toLowerCase(); updateSearch(); } });
+    document.addEventListener("click", (e) => { if (!searchBox.contains(e.target)) { searchList.style.display = "none"; } });
 
     loadIncidents();
     loadGraph();
@@ -1986,7 +2146,7 @@
     const ctx = activePageCtx;
     const v = $("#view");
     v.textContent = "";
-    v.appendChild(h("div", { class: "section-head" }, [h("div", {}, [h("h2", { text: "Kịch bản mô phỏng" }), h("div", { class: "desc", text: "Thử 3 tình huống với dữ liệu mô phỏng (tách khỏi dữ liệu vận hành)." })])]));
+    v.appendChild(h("div", { class: "section-head" }, [h("div", {}, [h("h2", { text: "Kịch bản mô phỏng" }), h("div", { class: "desc", text: "Thử tình huống với dữ liệu mô phỏng (tách khỏi dữ liệu vận hành)." })])]));
     const card = h("div", { class: "card" });
     v.appendChild(card);
     card.appendChild(h("div", { class: "message visible warn", text: "Dữ liệu mô phỏng — chưa xác nhận bởi Denso. Không trộn với dữ liệu vận hành." }));
@@ -1995,6 +2155,15 @@
     const st = h("span", { class: "cell-sub" });
     toolbar.appendChild(st);
     card.appendChild(toolbar);
+
+    // Hành động nhanh sau khi nạp.
+    const quick = h("div", { class: "explain", style: "margin-bottom:12px;display:none;" });
+    quick.appendChild(h("div", { style: "display:flex;gap:12px;align-items:center;flex-wrap:wrap;" }, [
+      h("button", { class: "btn btn-primary btn-sm", text: "Xem Bản đồ liên kết", onclick: () => navigate("map") }),
+      h("span", { class: "cell-sub", text: "Bước kế tiếp: Ghi nhận máy M10 dừng (Ghi nhận dữ liệu → Trạng thái máy)." }),
+    ]));
+    card.appendChild(quick);
+
     const list = h("div", { class: "grid grid-3" });
     const info = await api("/api/scenarios");
     if (!ctx.isCurrent()) return;
@@ -2006,13 +2175,34 @@
       h("button", { class: "btn btn-secondary btn-sm", text: "Chạy kịch bản này", onclick: () => analyzeByCode(s.incident_code) }),
     ])));
     card.appendChild(list);
-    const status = await api("/api/scenarios/status");
+    const status = await api("/api/scenarios/d3/status");
     if (!ctx.isCurrent()) return;
-    st.textContent = status.data.loaded ? "Đã nạp." : "Chưa nạp.";
+    if (status.data.loaded) {
+      st.textContent = "Đã nạp.";
+      quick.style.display = "";
+    } else {
+      st.textContent = "Chưa nạp.";
+    }
   }
   async function loadDemo() {
-    try { const d = await api("/api/scenarios/load", { method: "POST" }); toast(d.data.message); renderScenarios(); }
-    catch (e) { toast(e.message, "error"); }
+    try {
+      const d = await api("/api/scenarios/d3/load", { method: "POST" });
+      toast(d.data.message);
+      if (d.data.credentials && Object.keys(d.data.credentials).length) {
+        showCredentialsModal(d.data.credentials);
+      }
+      renderScenarios();
+    } catch (e) { toast(e.message, "error"); }
+  }
+  function showCredentialsModal(creds) {
+    const box = h("div", {});
+    box.appendChild(h("p", { text: "Tài khoản demo (mật khẩu chỉ hiện một lần — hãy ghi lại):" }));
+    renderTable(box, [
+      { key: "username", label: "Tên đăng nhập" },
+      { key: "password", label: "Mật khẩu" },
+      { key: "roles", label: "Vai trò", render: (r) => (r.roles || []).join(", ") },
+    ], Object.keys(creds).map(u => ({ username: u, password: creds[u].password, roles: creds[u].roles })));
+    openModal("Tài khoản demo", box);
   }
   async function analyzeByCode(code) {
     const d = await api("/api/incidents?page_size=100");

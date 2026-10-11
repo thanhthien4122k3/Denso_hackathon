@@ -40,6 +40,11 @@ MACHINES = [
     {"code": "M30", "name": "Máy đóng gói", "process": "P30"},
 ]
 
+MATERIALS = [
+    {"code": "MAT-100", "name": "Phôi", "unit": "pcs"},
+    {"code": "MAT-200", "name": "Bao bì", "unit": "pcs"},
+]
+
 PRODUCTS = [{"code": "SP-A", "name": "Sản phẩm A"}]
 
 ORDERS = [
@@ -67,6 +72,20 @@ EDGES = [
     ("department", "QC", "process", "P20", "department_responsibility", "Bộ phận chịu trách nhiệm"),
     ("department", "PROD", "line", "LINE-01", "department_responsibility", "Bộ phận chịu trách nhiệm"),
     ("department", "PLAN", "order", "PO-001", "department_responsibility", "Bộ phận chịu trách nhiệm"),
+    ("department", "DATA", "line", "LINE-01", "department_responsibility", "Bộ phận chịu trách nhiệm dữ liệu"),
+    # Vật tư cung cấp cho công đoạn; kho chịu trách nhiệm.
+    ("material", "MAT-100", "process", "P10", "production_dependency", "Cung cấp phôi"),
+    ("material", "MAT-200", "process", "P30", "production_dependency", "Cung cấp bao bì"),
+    ("department", "WH", "material", "MAT-100", "department_responsibility", "Bộ phận chịu trách nhiệm"),
+    ("department", "WH", "material", "MAT-200", "department_responsibility", "Bộ phận chịu trách nhiệm"),
+    # Chuyền gồm các công đoạn.
+    ("line", "LINE-01", "process", "P10", "production_dependency", "Chuyền gồm công đoạn"),
+    ("line", "LINE-01", "process", "P20", "production_dependency", "Chuyền gồm công đoạn"),
+    ("line", "LINE-01", "process", "P30", "production_dependency", "Chuyền gồm công đoạn"),
+    # Lô thuộc lệnh; lệnh sản xuất sản phẩm.
+    ("lot", "LOT-A", "order", "PO-001", "production_dependency", "Lô thuộc lệnh"),
+    ("lot", "LOT-B", "order", "PO-001", "production_dependency", "Lô thuộc lệnh"),
+    ("order", "PO-001", "product", "SP-A", "production_dependency", "Lệnh sản xuất sản phẩm"),
 ]
 
 EDGE_VALID_FROM = "2026-10-01T00:00:00+07:00"
@@ -136,6 +155,10 @@ DATASETS = [
      "collection_method": "manual", "generation_unit": "per_lot",
      "update_schedule": "per_shift", "event_time_field": "check_time",
      "timezone": "Asia/Ho_Chi_Minh", "confirmed": False},
+    {"code": "production_records", "name": "Sản lượng", "dataset_type": "table",
+     "collection_method": "manual", "generation_unit": "per_pcs",
+     "update_schedule": "per_shift", "event_time_field": "production_date",
+     "timezone": "Asia/Ho_Chi_Minh", "confirmed": False},
 ]
 
 DATASET_FIELDS = [
@@ -147,6 +170,29 @@ DATASET_FIELDS = [
      "data_type": "string", "is_key": False},
     {"dataset_code": "machine_states", "code": "error_code", "name": "Mã lỗi",
      "data_type": "string", "is_key": False},
+    {"dataset_code": "production_records", "code": "quantity", "name": "Số lượng đạt",
+     "data_type": "integer", "is_key": False},
+]
+
+# Luồng dữ liệu (lớp hệ thống): source -> dataset, dataset -> dataset.
+DATA_FLOW_EDGES = [
+    ("source", "APP-DEMO", "dataset", "machine_states", "data_flow", "Nguồn cấp trạng thái máy"),
+    ("source", "APP-DEMO", "dataset", "production_operations", "data_flow", "Nguồn cấp bối cảnh sản xuất"),
+    ("source", "APP-DEMO", "dataset", "buffer_snapshots", "data_flow", "Nguồn cấp hàng đệm"),
+    ("source", "APP-DEMO", "dataset", "qc_results", "data_flow", "Nguồn cấp kết quả QC"),
+    ("source", "APP-DEMO", "dataset", "production_records", "data_flow", "Nguồn cấp sản lượng"),
+    ("dataset", "machine_states", "dataset", "production_operations", "data_flow", "Trạng thái máy nối bối cảnh sản xuất"),
+]
+
+# Ánh xạ dữ liệu -> nghiệp vụ (data_mapping). source_ref của field là "dataset.field".
+DATA_MAPPING_EDGES = [
+    ("field", "machine_states.machine_code", "machine", "M10", "data_mapping", "Mã máy ánh xạ tới máy"),
+    ("field", "machine_states.event_time", "machine", "M10", "data_mapping", "Thời điểm sự kiện ánh xạ tới máy"),
+    ("field", "machine_states.state", "machine", "M10", "data_mapping", "Trạng thái ánh xạ tới máy"),
+    ("field", "machine_states.error_code", "machine", "M10", "data_mapping", "Mã lỗi ánh xạ tới máy"),
+    ("field", "production_records.quantity", "process", "P10", "data_mapping", "Số lượng ánh xạ tới công đoạn"),
+    ("dataset", "machine_states", "machine", "M10", "data_mapping", "Dataset trạng thái máy ánh xạ tới máy"),
+    ("dataset", "production_records", "process", "P20", "data_mapping", "Dataset sản lượng ánh xạ tới công đoạn"),
 ]
 
 # Mapping mã nguồn -> mã chuẩn (chỉ trong nguồn APP-DEMO).

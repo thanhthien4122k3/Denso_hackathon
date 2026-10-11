@@ -197,3 +197,82 @@ def test_d3_task_from_action_no_duplicate(d3):
     second = d3.post("/api/tasks/from-action", json=payload)
     assert second.status_code == 200
     assert second.json()["data"]["id"] == first.json()["data"]["id"]
+
+
+def test_d3_graph_no_isolated_nodes_and_system_edges(d3):
+    d = d3.get("/api/graph/map").json()["data"]
+    nodes, edges = d["nodes"], d["edges"]
+    connected = set()
+    for e in edges:
+        connected.add((e["source_type"], e["source_id"]))
+        connected.add((e["target_type"], e["target_id"]))
+    isolated = [(n["type"], n["code"]) for n in nodes if (n["type"], n["id"]) not in connected]
+    assert isolated == [], f"node bị cô lập: {isolated}"
+
+    kinds = {e["kind"] for e in edges}
+    assert "data_flow" in kinds
+    assert "data_mapping" in kinds
+
+    # Nạp lại không tạo cạnh trùng (idempotent).
+    edge_count = len(edges)
+    assert d3.post("/api/scenarios/d3/load").json()["data"]["loaded"] is False
+    d2 = d3.get("/api/graph/map").json()["data"]
+    assert len(d2["edges"]) == edge_count
+
+
+def test_d3_impact_set_unchanged_after_enrichment(d3):
+    machine = _by_code(d3, "/api/catalog/machine", "M10")
+    inc = d3.post("/api/incidents", json={
+        "code": "INC-IMPACT-01", "title": "impact", "incident_type": "MACHINE_STOP",
+        "source_object_type": "machine", "source_object_id": machine["id"],
+        "start_time": "2026-10-06T10:00:00+07:00", "severity": "HIGH",
+        "description": "test", "status": "OPEN",
+        "request_id": "550e8400-e29b-41d4-a716-4466554400cc",
+        "is_simulated": True,
+    })
+    assert inc.status_code == 201
+    iid = inc.json()["data"]["id"]
+    res = d3.post("/api/analysis/run", json={
+        "incident_id": iid, "max_depth": 5, "duration_minutes": 15,
+    }).json()["data"]
+
+    # Bối cảnh + con số chuẩn không đổi.
+    assert res["context"]["status"] == "MATCHED"
+    assert res["context"]["lot_code"] == "LOT-B"
+    assert res["context"]["process_code"] == "P10"
+    assert res["buffer_estimate"]["depletion_minutes"] == 6.0
+    assert res["capacity_estimate"]["estimated_quantity"] == 180.0
+    assert "INC-HIST-001" in [x["code"] for x in res["related_past_incidents"]]
+
+    # Tập tác động từ M10 không đổi dù đã làm giàu dữ liệu.
+    impacts = res["impacts"]
+    process_impacts = {(i["node_name"], i["impact_type"]) for i in impacts if i["node_type"] == "process"}
+    assert process_impacts == {
+        ("Gia công", "DIRECT"), ("Kiểm tra", "INDIRECT"), ("Đóng gói", "INDIRECT"),
+    }
+    lot_impacts = {(i["node_name"], i["impact_type"]) for i in impacts if i["node_type"] == "lot"}
+    assert lot_impacts == {("LOT-B", "OBSERVED")}
+    # Không có node khác (vật tư/chuyền/lệnh/sản phẩm) bị lan truyền từ M10.
+    assert all(i["node_type"] in ("process", "lot") for i in impacts)
+
+
+def test_d3_graph_map_center_depth(d3):
+    machine = _by_code(d3, "/api/catalog/machine", "M10")
+    p10 = _by_code(d3, "/api/catalog/process", "P10")
+    p20 = _by_code(d3, "/api/catalog/process", "P20")
+    d = d3.get(f"/api/graph/map?center=machine:{machine['id']}&depth=1").json()["data"]
+    keys = {(n["type"], n["id"]) for n in d["nodes"]}
+    assert ("machine", machine["id"]) in keys
+    assert ("process", p10["id"]) in keys       # kề 1 bước
+    assert ("process", p20["id"]) not in keys   # cách 2 bước
+
+
+def test_d3_graph_map_limit(d3):
+    d = d3.get("/api/graph/map?limit=5").json()["data"]
+    assert len(d["nodes"]) <= 5
+    assert d.get("limited") is True
+    # Mỗi cạnh trả về có hai đầu nằm trong tập node trả về.
+    keys = {(n["type"], n["id"]) for n in d["nodes"]}
+    for e in d["edges"]:
+        assert (e["source_type"], e["source_id"]) in keys
+        assert (e["target_type"], e["target_id"]) in keys
