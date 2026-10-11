@@ -127,11 +127,17 @@ Lần chạy cũ vẫn giữ trạng thái `AMBIGUOUS` (snapshot bất biến, k
 - Trong hồ sơ, bấm **Xác nhận khôi phục** (ghi `recovered_at/by`).
 - Chạy lại phân tích với 12 phút → `12 × 12 = 144` (ước tính năng lực).
 
+> Nút **Xác nhận khôi phục**/**Đóng hồ sơ** chỉ hiện với `COORDINATOR`/`ADMIN`;
+> tài khoản khác chỉ thấy dòng giải thích. Sau khi lưu, hồ sơ hiện thời điểm và
+> người khôi phục, thẻ **Dòng thời gian** có dòng "Xác nhận khôi phục" kèm ghi chú.
+
 ## 12. Đóng hồ sơ theo quyền
 
 Chỉ `COORDINATOR`/`ADMIN` đóng được hồ sơ:
 - Bấm **Đóng hồ sơ**, nhập **tóm tắt kết quả xử lý** và **trạng thái nguyên nhân**
   (có thể để `UNKNOWN` nếu chưa xác định được — không bắt buộc bịa nguyên nhân).
+- Sau khi đóng, hồ sơ về `RESOLVED`, hiện người đóng/thời điểm đóng, và hai nút
+  thao tác biến mất (thay bằng dòng **Hồ sơ đã đóng**).
 
 ## Ví dụ request/response
 

@@ -82,6 +82,7 @@ thành mật khẩu `postgres` bạn đã đặt ở Bước 2. Lưu và đóng.
 | `APP_PORT` | Cổng chạy ứng dụng | `8000` |
 | `MAX_QUANTITY` | Số lượng tối đa mỗi ô (đạt/lỗi) | `1000000000` |
 | `MATERIAL_LOW_THRESHOLD` | Ngưỡng cảnh báo thiếu vật tư | `50` |
+| `QC_DEFECT_RATE_THRESHOLD` | Ngưỡng cảnh báo tỷ lệ lỗi QC (%) | `5` |
 | `DEFAULT_PAGE_SIZE` | Số dòng mỗi trang danh sách | `20` |
 | `MAX_PAGE_SIZE` | Số dòng tối đa mỗi trang | `100` |
 | `DATABASE_YAML_PATH` | File SQL khởi tạo bảng | `config/database.yaml` |
@@ -189,6 +190,7 @@ Mô tả chi tiết từng trường trong **Bản đồ liên kết** và **Ph�
 | Vận hành | Công việc theo bộ phận | Quản lý công việc |
 | Phân tích | Bản đồ liên kết | Xem sơ đồ quan hệ máy/công đoạn/vật tư/dữ liệu |
 | Phân tích | Phân tích tác động | Chạy phân tích và xem kết quả |
+| Phân tích | Bảng gợi ý theo bộ phận | Xem hành động đề xuất của 3 tình huống, xếp theo bộ phận |
 | Phân tích | Kịch bản mô phỏng | Nạp dữ liệu demo, thử tình huống |
 | Thiết lập dữ liệu | Danh mục sản xuất | Thêm/sửa bộ phận, chuyền, công đoạn, máy, vật tư... |
 | Thiết lập dữ liệu | Nguồn dữ liệu & ánh xạ | Khai báo hệ thống MES/ERP, dataset, trường, luồng |

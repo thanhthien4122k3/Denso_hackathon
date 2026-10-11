@@ -12,6 +12,9 @@ venv/
 Thumbs.db
 .DS_Store
 
+# Word owner/lock files
+~$*
+
 # IDE
 .idea/
 .vscode/

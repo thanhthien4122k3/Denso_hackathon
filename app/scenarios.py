@@ -15,6 +15,7 @@ def dt(iso: str) -> datetime:
 
 
 DEPARTMENTS = [
+    {"code": "PROD", "name": "Sản xuất"},
     {"code": "MAINT", "name": "Bảo trì"},
     {"code": "QC", "name": "Kiểm tra chất lượng"},
     {"code": "WH", "name": "Kho"},

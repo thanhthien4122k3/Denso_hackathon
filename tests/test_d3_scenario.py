@@ -1,5 +1,7 @@
 """Integration test cho bộ dữ liệu mô phỏng DEMO-D3-01 và luồng phân tích mở rộng."""
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
 
 from app.database import get_connection
@@ -276,3 +278,317 @@ def test_d3_graph_map_limit(d3):
     for e in d["edges"]:
         assert (e["source_type"], e["source_id"]) in keys
         assert (e["target_type"], e["target_id"]) in keys
+
+
+# ---- Luồng demo end-to-end bằng tài khoản demo (Bước 0-10) ----
+
+DEMO_PASS = "demo-pass-123"
+
+
+def _reset_demo_password(username):
+    from app.services.auth_service import AuthService
+
+    svc = AuthService()
+    u = svc.repository.find_by_username(username)
+    assert u is not None, f"không tìm thấy tài khoản demo {username}"
+    svc.reset_password(u["id"], DEMO_PASS)
+
+
+def _client_for(username):
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    _reset_demo_password(username)
+    tc = TestClient(app)
+    r = tc.post("/api/auth/login", json={"username": username, "password": DEMO_PASS})
+    assert r.status_code == 200, r.text
+    return tc
+
+
+def test_d3_full_demo_flow_with_roles(d3):
+    handler = _client_for("demo-handler")
+    coordinator = _client_for("demo-coordinator")
+    machine = _by_code(d3, "/api/catalog/machine", "M10")
+
+    # Ghi nhận máy dừng (payload của form UI, có is_simulated=true).
+    r = handler.post("/api/operations/machine-states", json={
+        "machine_id": machine["id"], "event_time": "2026-10-06T10:00:00+07:00",
+        "state": "STOPPED", "error_code": "E-DEMO-01",
+        "note": "Máy dừng, màn hình báo lỗi bộ phận cấp phôi", "is_simulated": True,
+    })
+    assert r.status_code == 201
+    assert r.json()["data"]["is_simulated"] is True
+
+    # Tạo sự cố đúng payload form UI (is_simulated=true).
+    inc = coordinator.post("/api/incidents", json={
+        "code": "INC-FLOW-01", "title": "Máy M10 dừng - lỗi cấp phôi",
+        "incident_type": "MACHINE_STOP", "source_object_type": "machine",
+        "source_object_id": machine["id"], "start_time": "2026-10-06T10:00:00+07:00",
+        "severity": "HIGH", "description": "Máy dừng, màn hình báo lỗi bộ phận cấp phôi.",
+        "status": "OPEN", "request_id": "550e8400-e29b-41d4-a716-4466554400f1",
+        "is_simulated": True,
+    })
+    assert inc.status_code == 201
+    incident_id = inc.json()["data"]["id"]
+
+    # Phân tích 15 phút → MATCHED/LOT-B/6 phút/180.
+    res = coordinator.post("/api/analysis/run", json={
+        "incident_id": incident_id, "max_depth": 5, "duration_minutes": 15,
+    }).json()["data"]
+    assert res["context"]["status"] == "MATCHED"
+    assert res["context"]["lot_code"] == "LOT-B"
+    assert res["buffer_estimate"]["depletion_minutes"] == 6.0
+    assert res["capacity_estimate"]["estimated_quantity"] == 180.0
+    run1 = res["run_id"]
+
+    # Tạo công việc từ hành động MAINT; bấm lại không trùng.
+    maint = next(a for a in res["actions"] if a["department_code"] == "MAINT")
+    task_payload = {"analysis_action_id": maint["id"], "title": maint["action"],
+                    "department_id": maint["department_id"], "is_simulated": True}
+    first = coordinator.post("/api/tasks/from-action", json=task_payload)
+    assert first.status_code == 201
+    task_id = first.json()["data"]["id"]
+    second = coordinator.post("/api/tasks/from-action", json=task_payload)
+    assert second.status_code == 200
+    assert second.json()["data"]["id"] == task_id
+
+    # Handler đổi trạng thái công việc.
+    r = handler.post(f"/api/tasks/{task_id}/status", json={"status": "DONE"})
+    assert r.status_code == 200
+    assert r.json()["data"]["status"] == "DONE"
+
+    # Coordinator xác nhận khôi phục lúc 10:12 (+07:00).
+    r = coordinator.post(f"/api/incidents/{incident_id}/recover", json={
+        "recovered_at": "2026-10-06T10:12:00+07:00", "note": "Đã thay phôi mới"})
+    assert r.status_code == 200
+    data = r.json()["data"]
+    assert data["recovered_by"] == "demo-coordinator"
+    assert data["status"] == "MITIGATING"
+
+    # Chạy lại 12 phút → 144; run 15 phút cũ vẫn 180.
+    res2 = coordinator.post("/api/analysis/run", json={
+        "incident_id": incident_id, "max_depth": 5, "duration_minutes": 12,
+    }).json()["data"]
+    assert res2["capacity_estimate"]["estimated_quantity"] == 144.0
+    old = coordinator.get(f"/api/analysis/runs/{run1}").json()["data"]
+    assert old["capacity_estimate"]["estimated_quantity"] == 180.0
+
+    # Đóng hồ sơ.
+    r = coordinator.post(f"/api/incidents/{incident_id}/close", json={
+        "resolution_summary": "Đã thay phôi, máy chạy lại bình thường.",
+        "root_cause_status": "CONFIRMED", "closed_at": "2026-10-06T11:00:00+07:00"})
+    assert r.status_code == 200
+    data = r.json()["data"]
+    assert data["status"] == "RESOLVED"
+    assert data["closed_by"] == "demo-coordinator"
+
+    handler.close(); coordinator.close()
+
+
+def test_d3_incident_history_endpoint(d3):
+    coordinator = _client_for("demo-coordinator")
+    machine = _by_code(d3, "/api/catalog/machine", "M10")
+
+    inc = coordinator.post("/api/incidents", json={
+        "code": "INC-HIST-FLOW", "title": "History", "incident_type": "MACHINE_STOP",
+        "source_object_type": "machine", "source_object_id": machine["id"],
+        "start_time": "2026-10-06T10:00:00+07:00", "severity": "HIGH",
+        "description": "history", "status": "OPEN",
+        "request_id": "550e8400-e29b-41d4-a716-4466554400f2", "is_simulated": True,
+    })
+    assert inc.status_code == 201
+    incident_id = inc.json()["data"]["id"]
+
+    r = coordinator.post(f"/api/incidents/{incident_id}/recover", json={
+        "recovered_at": "2026-10-06T10:12:00+07:00", "note": "Ghi chú khôi phục"})
+    assert r.status_code == 200
+
+    history = coordinator.get(f"/api/incidents/{incident_id}/history").json()["data"]
+    recovered = [h for h in history if h["action"] == "RECOVERED"]
+    assert recovered, "phải có dòng RECOVERED trong lịch sử"
+    assert recovered[0]["changed_by"] == "demo-coordinator"
+    assert recovered[0]["detail"].get("note") == "Ghi chú khôi phục"
+
+    r = coordinator.post(f"/api/incidents/{incident_id}/close", json={
+        "resolution_summary": "Đã xử lý xong", "closed_at": "2026-10-06T11:00:00+07:00"})
+    assert r.status_code == 200
+
+    history = coordinator.get(f"/api/incidents/{incident_id}/history").json()["data"]
+    assert any(h["action"] == "CLOSED" for h in history)
+
+    # Sự cố không tồn tại → 404.
+    assert coordinator.get("/api/incidents/99999999/history").status_code == 404
+
+    coordinator.close()
+
+
+def test_d3_recover_after_close_conflict(d3):
+    coordinator = _client_for("demo-coordinator")
+    machine = _by_code(d3, "/api/catalog/machine", "M10")
+
+    inc = coordinator.post("/api/incidents", json={
+        "code": "INC-CONFLICT-01", "title": "Conflict", "incident_type": "MACHINE_STOP",
+        "source_object_type": "machine", "source_object_id": machine["id"],
+        "start_time": "2026-10-06T10:00:00+07:00", "severity": "HIGH",
+        "description": "conflict", "status": "OPEN",
+        "request_id": "550e8400-e29b-41d4-a716-4466554400f3", "is_simulated": True,
+    })
+    assert inc.status_code == 201
+    incident_id = inc.json()["data"]["id"]
+
+    assert coordinator.post(f"/api/incidents/{incident_id}/recover", json={
+        "recovered_at": "2026-10-06T10:12:00+07:00"}).status_code == 200
+    assert coordinator.post(f"/api/incidents/{incident_id}/close", json={
+        "resolution_summary": "Đã xử lý xong", "closed_at": "2026-10-06T11:00:00+07:00"}).status_code == 200
+    # Khôi phục hồ sơ đã đóng → 409.
+    assert coordinator.post(f"/api/incidents/{incident_id}/recover", json={
+        "recovered_at": "2026-10-06T10:15:00+07:00"}).status_code == 409
+
+    coordinator.close()
+
+
+# ---- Định lượng cho QUALITY và MATERIAL_SHORTAGE ----
+
+def _incident_by_code(client, code):
+    d = client.get("/api/incidents?search=" + code).json()["data"]["items"]
+    assert d, f"không tìm thấy sự cố {code}"
+    return d[0]
+
+
+def _run_count():
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT COUNT(*) AS c FROM production.analysis_runs")
+        return cur.fetchone()["c"]
+
+
+def test_d3_load_twice_and_new_seed(d3):
+    assert d3.post("/api/scenarios/d3/load").json()["data"]["loaded"] is False
+    qual = _incident_by_code(d3, "INC-D3-QUAL")
+    assert qual["is_simulated"] is True and qual["incident_type"] == "QUALITY"
+    mat = _incident_by_code(d3, "INC-D3-MAT")
+    assert mat["incident_type"] == "MATERIAL_SHORTAGE"
+    lot = _by_code(d3, "/api/catalog/lot", "LOT-A")
+    assert float(lot.get("qty")) == 400.0
+    order = _by_code(d3, "/api/catalog/order", "PO-001")
+    assert float(order.get("plan_qty")) == 1000.0
+
+
+def test_d3_quality_quantification(d3):
+    inc = _incident_by_code(d3, "INC-D3-QUAL")
+    res = d3.post("/api/analysis/run", json={"incident_id": inc["id"], "max_depth": 5}).json()["data"]
+
+    q = res["quantification"]
+    assert q["kind"] == "QUALITY"
+    assert q["available"] is True
+    assert q["defect_rate"] == pytest.approx(12.0)
+    assert q["estimated_defects"] == pytest.approx(48.0)
+    assert q["plan_defect_pct"] == pytest.approx(4.8)
+    assert q["order_code"] == "PO-001"
+    assert [m["material_code"] for m in q["materials"]] == ["MAT-100"]
+
+    # Ảnh hưởng: lệnh PO-001 (DIRECT) và sản phẩm SP-A (INDIRECT).
+    order_id = _by_code(d3, "/api/catalog/order", "PO-001")["id"]
+    product_id = _by_code(d3, "/api/catalog/product", "SP-A")["id"]
+    orders = [i for i in res["impacts"] if i["node_type"] == "order"]
+    products = [i for i in res["impacts"] if i["node_type"] == "product"]
+    assert orders and orders[0]["impact_type"] == "DIRECT" and orders[0]["node_id"] == order_id
+    assert products and products[0]["impact_type"] == "INDIRECT" and products[0]["node_id"] == product_id
+
+    dept_codes = {a["department_code"] for a in res["actions"]}
+    assert {"QC", "WH", "PROD", "PLAN"} <= dept_codes
+    assert all(a["department_id"] is not None for a in res["actions"])
+
+
+def test_d3_material_shortage_quantification(d3):
+    inc = _incident_by_code(d3, "INC-D3-MAT")
+    res = d3.post("/api/analysis/run", json={"incident_id": inc["id"], "max_depth": 5}).json()["data"]
+
+    q = res["quantification"]
+    assert q["kind"] == "MATERIAL_SHORTAGE"
+    assert q["available"] is True
+    assert q["available_qty"] == pytest.approx(48.0)
+    assert q["rate_per_minute"] == pytest.approx(12.0)
+    assert q["minutes"] == pytest.approx(4.0)
+    assert q["process_code"] == "P10"
+    t = datetime.fromisoformat(q["stockout_time"]).astimezone(timezone(timedelta(hours=7)))
+    assert (t.hour, t.minute) == (10, 34)
+
+    p10 = _by_code(d3, "/api/catalog/process", "P10")["id"]
+    p20 = _by_code(d3, "/api/catalog/process", "P20")["id"]
+    p30 = _by_code(d3, "/api/catalog/process", "P30")["id"]
+    direct = [i for i in res["impacts"] if i["node_type"] == "process" and i["impact_type"] == "DIRECT"]
+    indirect = [i for i in res["impacts"] if i["node_type"] == "process" and i["impact_type"] == "INDIRECT"]
+    assert [i["node_id"] for i in direct] == [p10]
+    assert {i["node_id"] for i in indirect} == {p20, p30}
+
+    dept_codes = {a["department_code"] for a in res["actions"]}
+    assert {"WH", "PROD", "PLAN"} <= dept_codes
+    assert all(a["department_id"] is not None for a in res["actions"])
+
+
+def test_d3_machine_stop_numbers_unchanged(d3):
+    inc = _incident_by_code(d3, "INC-DEMO-01")
+    res = d3.post("/api/analysis/run", json={"incident_id": inc["id"], "max_depth": 5,
+                                             "duration_minutes": 15}).json()["data"]
+    assert res["context"]["status"] == "MATCHED"
+    assert res["context"]["lot_code"] == "LOT-B"
+    assert res["context"]["process_code"] == "P10"
+    assert res["buffer_estimate"]["depletion_minutes"] == 6.0
+    assert res["capacity_estimate"]["estimated_quantity"] == 180.0
+    res2 = d3.post("/api/analysis/run", json={"incident_id": inc["id"], "max_depth": 5,
+                                              "duration_minutes": 12}).json()["data"]
+    assert res2["capacity_estimate"]["estimated_quantity"] == 144.0
+
+
+def test_d3_missing_data_quantification(d3):
+    lot_b = _by_code(d3, "/api/catalog/lot", "LOT-B")
+    inc = d3.post("/api/incidents", json={
+        "code": "INC-NOQC", "title": "no qc", "incident_type": "QUALITY",
+        "source_object_type": "lot", "source_object_id": lot_b["id"],
+        "start_time": "2026-10-06T10:20:00+07:00", "severity": "HIGH",
+        "description": "x", "status": "OPEN",
+        "request_id": "550e8400-e29b-41d4-a716-4466554400a1", "is_simulated": True,
+    })
+    res = d3.post("/api/analysis/run", json={"incident_id": inc.json()["data"]["id"],
+                                             "max_depth": 5}).json()["data"]
+    assert res["quantification"]["available"] is False
+    assert "message" in res["quantification"]
+
+    mat200 = _by_code(d3, "/api/catalog/material", "MAT-200")
+    inc2 = d3.post("/api/incidents", json={
+        "code": "INC-NOMAT", "title": "no mat", "incident_type": "MATERIAL_SHORTAGE",
+        "source_object_type": "material", "source_object_id": mat200["id"],
+        "start_time": "2026-10-06T10:30:00+07:00", "severity": "HIGH",
+        "description": "x", "status": "OPEN",
+        "request_id": "550e8400-e29b-41d4-a716-4466554400a2", "is_simulated": True,
+    })
+    res2 = d3.post("/api/analysis/run", json={"incident_id": inc2.json()["data"]["id"],
+                                              "max_depth": 5}).json()["data"]
+    assert res2["quantification"]["available"] is False
+    assert "message" in res2["quantification"]
+
+
+def test_d3_action_matrix(d3):
+    # Chế độ không có dữ liệu → run_id null, không có ô; endpoint không ghi DB.
+    empty = d3.get("/api/analysis/action-matrix?simulated=false").json()["data"]
+    assert all(s["run_id"] is None for s in empty["scenarios"])
+    assert empty["departments"] == [] and empty["cells"] == []
+
+    before = _run_count()
+    d = d3.get("/api/analysis/action-matrix?simulated=true").json()["data"]
+    after = _run_count()
+    assert after == before  # không tạo thêm lần phân tích nào
+
+    assert {s["type"] for s in d["scenarios"]} == {"MACHINE_STOP", "QUALITY", "MATERIAL_SHORTAGE"}
+    dept_codes = {x["code"] for x in d["departments"]}
+    assert {"PROD", "MAINT", "QC", "PLAN", "WH"} <= dept_codes
+    cells = {(c["department"], c["incident_type"]) for c in d["cells"]}
+    assert ("QC", "QUALITY") in cells
+    assert ("WH", "QUALITY") in cells
+    assert ("PROD", "QUALITY") in cells
+    assert ("PLAN", "QUALITY") in cells
+    assert ("WH", "MATERIAL_SHORTAGE") in cells
+    assert ("PROD", "MATERIAL_SHORTAGE") in cells
+    assert ("PLAN", "MATERIAL_SHORTAGE") in cells
+    assert ("MAINT", "MACHINE_STOP") in cells

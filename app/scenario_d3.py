@@ -124,6 +124,19 @@ CAPACITY_PROFILES = [
      "source_confirmation": "Demo", "note": "Công suất tham chiếu M10/P10/SP-A"},
 ]
 
+# Kết quả QC cho tình huống QUALITY (INC-D3-QUAL).
+QC_RESULTS = [
+    {"lot_code": "LOT-A", "product_code": "SP-A", "process_code": "P20",
+     "check_time": "2026-10-06T10:20:00+07:00", "inspected_qty": 100,
+     "defect_qty": 12, "defect_type": "Kích thước", "result": "FAIL"},
+]
+
+# Trạng thái vật tư cho tình huống MATERIAL_SHORTAGE (INC-D3-MAT).
+MATERIAL_STATUSES = [
+    {"material_code": "MAT-100", "recorded_at": "2026-10-06T10:30:00+07:00",
+     "available_qty": 48, "unit": "pcs", "scope": "Kho"},
+]
+
 # Các giả định demo (để tính toán ước tính, không phải dữ liệu thật).
 ASSUMPTIONS = [
     "Không bổ sung hàng vào buffer sau 10:00.",
@@ -263,6 +276,20 @@ HISTORIC_EXPERIENCE = {
     "result": "Máy chạy lại sau xử lý.",
     "approved_by": "demo-supervisor",
 }
+
+# Hai sự cố mở để demo định lượng QUALITY và MATERIAL_SHORTAGE.
+OPEN_INCIDENTS = [
+    {"code": "INC-D3-QUAL", "title": "QC phát hiện lỗi kích thước lô LOT-A",
+     "incident_type": "QUALITY", "source_object_type": "lot", "source_object_code": "LOT-A",
+     "start_time": "2026-10-06T10:20:00+07:00", "severity": "HIGH",
+     "description": "QC phát hiện 12/100 lỗi kích thước ở P20.",
+     "status": "OPEN", "department_code": "QC"},
+    {"code": "INC-D3-MAT", "title": "Thiếu vật tư MAT-100",
+     "incident_type": "MATERIAL_SHORTAGE", "source_object_type": "material",
+     "source_object_code": "MAT-100", "start_time": "2026-10-06T10:30:00+07:00",
+     "severity": "HIGH", "description": "MAT-100 còn 48 pcs, thấp hơn ngưỡng 50.",
+     "status": "OPEN", "department_code": "WH"},
+]
 
 # Tài khoản demo (tự sinh mật khẩu khi nạp; chưa phải danh tính xác thực).
 USERS = [

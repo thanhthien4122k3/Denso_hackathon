@@ -11,7 +11,7 @@ from app.repositories.context_repository import ContextRepository
 from app.repositories.graph_repository import GraphRepository
 from app.repositories.incident_repository import IncidentRepository
 from app.repositories.operations_repository import OperationsRepository
-from app.settings import MATERIAL_LOW_THRESHOLD
+from app.settings import MATERIAL_LOW_THRESHOLD, QC_DEFECT_RATE_THRESHOLD
 
 
 class AnalysisService:
@@ -33,23 +33,21 @@ class AnalysisService:
             return f"{node_type}#{node_id}"
         return node.get("name") or node.get("code") or f"{node_type}#{node_id}"
 
-    def _signals(self, incident: dict) -> dict:
-        itype = incident["incident_type"]
-        source_type = incident.get("source_object_type")
-        source_id = incident.get("source_object_id")
-
+    def _build_signals(self, incident_type: str, source_type, source_id) -> tuple[dict, str | None]:
+        """Tính tín hiệu từ dữ liệu vận hành; trả (signals, error_code)."""
         signals = {
-            "has_machine_stop": itype == "MACHINE_STOP",
+            "has_machine_stop": incident_type == "MACHINE_STOP",
             "has_error_code": False,
             "qc_fail": False,
             "low_material": False,
-            "dataset_delay": itype == "DATA_DELAY",
+            "dataset_delay": incident_type == "DATA_DELAY",
             "defect_rate": None,
             "material_available": None,
         }
+        error_code = None
         if source_type == "machine" and source_id:
-            err = self.operations.latest_downtime_error(source_id)
-            signals["has_error_code"] = bool(err)
+            error_code = self.operations.latest_downtime_error(source_id)
+            signals["has_error_code"] = bool(error_code)
         if source_type == "lot" and source_id:
             qc = self.operations.latest_qc(source_id)
             if qc and qc["inspected_qty"]:
@@ -61,11 +59,11 @@ class AnalysisService:
                 avail = float(ms["available_qty"])
                 signals["material_available"] = avail
                 signals["low_material"] = avail < MATERIAL_LOW_THRESHOLD
-        if itype == "QUALITY":
+        if incident_type == "QUALITY":
             signals["qc_fail"] = True
-        if itype == "MATERIAL_SHORTAGE":
+        if incident_type == "MATERIAL_SHORTAGE":
             signals["low_material"] = True
-        return signals
+        return signals, error_code
 
     # ------------------------------------------------------------------
     # Bối cảnh sản xuất & ước tính định lượng
@@ -229,6 +227,144 @@ class AnalysisService:
             return obj
         return str(obj)
 
+    def _materials_for_lot(self, lot_id):
+        """Vật tư cung cấp cho các công đoạn mà lô đã đi qua (truy xuất ngược trên đồ thị)."""
+        ops, _ = self.context.list_operations(1, 100, lot_id=lot_id)
+        process_ids = {o["process_id"] for o in ops}
+        if not process_ids:
+            return []
+        edges = self.graph.all_edges()
+        materials = []
+        seen = set()
+        for e in edges:
+            if (e["kind"] == "production_dependency" and e["source_type"] == "material"
+                    and e["target_type"] == "process" and e["target_id"] in process_ids):
+                mid = e["source_id"]
+                if mid in seen:
+                    continue
+                seen.add(mid)
+                node = self.graph.get_node("material", mid)
+                materials.append({
+                    "material_id": mid,
+                    "material_code": node["code"] if node else None,
+                    "material_name": node["name"] if node else None,
+                })
+        return materials
+
+    def _quantify_quality(self, lot_id):
+        """Định lượng lỗi chất lượng: tỷ lệ lỗi, lỗi ước tính cả lô, % kế hoạch, vật tư truy xuất."""
+        qc = self.operations.latest_qc(lot_id)
+        if not qc or not qc.get("inspected_qty"):
+            return {"kind": "QUALITY", "available": False,
+                    "message": "Chưa đủ dữ liệu để định lượng lỗi chất lượng (thiếu kết quả QC của lô)."}
+        inspected = float(qc["inspected_qty"])
+        defect = float(qc["defect_qty"])
+        defect_rate = round(defect / inspected * 100, 2)
+
+        lot = self.catalog.get("lot", lot_id)
+        lot_qty = float(lot["qty"]) if lot and lot.get("qty") is not None else None
+        order_code = None
+        plan_qty = None
+        order_id = lot.get("production_order_id") if lot else None
+        if order_id:
+            order = self.catalog.get("order", order_id)
+            if order:
+                order_code = order.get("code")
+                plan_qty = float(order["plan_qty"]) if order.get("plan_qty") is not None else None
+
+        materials = self._materials_for_lot(lot_id)
+        base = {
+            "kind": "QUALITY",
+            "defect_rate": defect_rate,
+            "inspected_qty": inspected,
+            "defect_qty": defect,
+            "materials": materials,
+        }
+        if lot_qty is None or plan_qty is None:
+            base.update({"available": False,
+                         "message": "Chưa đủ dữ liệu để định lượng lỗi chất lượng "
+                                    "(thiếu quy mô lô hoặc kế hoạch sản lượng của lệnh)."})
+            return base
+        estimated = round(lot_qty * defect / inspected, 2)
+        plan_pct = round(estimated / plan_qty * 100, 2)
+        base.update({
+            "available": True,
+            "formula": ("tỷ lệ lỗi = số lỗi ÷ số kiểm × 100; "
+                        "số lỗi ước tính cả lô = quy mô lô × tỷ lệ lỗi; "
+                        "tỷ lệ so kế hoạch = số lỗi ước tính ÷ kế hoạch lệnh × 100"),
+            "lot_qty": lot_qty,
+            "estimated_defects": estimated,
+            "order_code": order_code,
+            "plan_qty": plan_qty,
+            "plan_defect_pct": plan_pct,
+            "assumptions": "Mẫu kiểm đại diện cho cả lô.",
+        })
+        return base
+
+    def _quantify_material(self, material_id, at_time, is_simulated=None):
+        """Định lượng thiếu vật tư: tồn khả dụng, tốc độ tiêu thụ, thời điểm cạn."""
+        ms = self.operations.latest_material_available(material_id)
+        if not ms:
+            return {"kind": "MATERIAL_SHORTAGE", "available": False,
+                    "message": "Chưa đủ dữ liệu để định lượng thiếu vật tư (thiếu trạng thái tồn kho)."}
+        available = float(ms["available_qty"])
+        edges = self.graph.all_edges()
+        process_ids = [e["target_id"] for e in edges
+                       if e["kind"] == "production_dependency" and e["source_type"] == "material"
+                       and e["source_id"] == material_id and e["target_type"] == "process"]
+        material_node = self.graph.get_node("material", material_id)
+        base = {
+            "kind": "MATERIAL_SHORTAGE",
+            "material_code": material_node["code"] if material_node else None,
+            "available_qty": available,
+        }
+        if not process_ids:
+            base.update({"available": False,
+                         "message": "Chưa đủ dữ liệu để định lượng thiếu vật tư "
+                                    "(không xác định được công đoạn phụ thuộc vật tư)."})
+            return base
+        process_id = process_ids[0]
+        process_node = self.graph.get_node("process", process_id)
+        base["process_code"] = process_node["code"] if process_node else None
+        profile = self.context.capacity_for(process_id, None, None, at_time, is_simulated=is_simulated)
+        if not profile or not profile.get("rate_per_minute"):
+            base.update({"available": False,
+                         "message": "Chưa đủ dữ liệu để định lượng thiếu vật tư "
+                                    "(thiếu công suất tiêu thụ của công đoạn)."})
+            return base
+        rpm = float(profile["rate_per_minute"])
+        if rpm <= 0:
+            base.update({"available": False, "message": "Công suất tiêu thụ không hợp lệ (<= 0)."})
+            return base
+        minutes = round(available / rpm, 2)
+        stockout_time = None
+        stockout_hm = None
+        if at_time:
+            stockout_time = at_time + timedelta(minutes=minutes)
+            stockout_hm = stockout_time.strftime("%H:%M")
+        base.update({
+            "available": True,
+            "formula": "thời gian cạn = tồn khả dụng ÷ tốc độ tiêu thụ; "
+                       "thời điểm cạn = thời điểm đánh giá + thời gian cạn",
+            "rate_per_minute": rpm,
+            "minutes": minutes,
+            "stockout_time": stockout_time.isoformat() if stockout_time else None,
+            "stockout_hm": stockout_hm,
+            "assumptions": "1 đơn vị vật tư cho 1 sản phẩm, không nhập thêm hàng, tốc độ không đổi.",
+        })
+        return base
+
+    @staticmethod
+    def _render_action_text(action, data):
+        """Dùng text_data nếu điền đủ khóa; ngược lại dùng text tĩnh."""
+        template = action.get("text_data")
+        if not template:
+            return action["text"]
+        try:
+            return template.format(**data)
+        except (KeyError, IndexError, ValueError, TypeError):
+            return action["text"]
+
     def _related_past(self, incident_type, source_type, source_id, error_code):
         current = {
             "incident_type": incident_type,
@@ -261,29 +397,7 @@ class AnalysisService:
         for rule in matched:
             propagate.update(rule.get("propagate_kinds", []))
 
-        signals = {"has_machine_stop": incident_type == "MACHINE_STOP",
-                   "has_error_code": False, "qc_fail": False, "low_material": False,
-                   "dataset_delay": incident_type == "DATA_DELAY",
-                   "defect_rate": None, "material_available": None}
-        error_code = None
-        if source_type == "machine" and source_id:
-            error_code = self.operations.latest_downtime_error(source_id)
-            signals["has_error_code"] = bool(error_code)
-        if source_type == "lot" and source_id:
-            qc = self.operations.latest_qc(source_id)
-            if qc and qc["inspected_qty"]:
-                signals["qc_fail"] = qc["defect_qty"] > 0
-                signals["defect_rate"] = round(qc["defect_qty"] / qc["inspected_qty"] * 100, 2)
-        if source_type == "material" and source_id:
-            ms = self.operations.latest_material_available(source_id)
-            if ms:
-                avail = float(ms["available_qty"])
-                signals["material_available"] = avail
-                signals["low_material"] = avail < MATERIAL_LOW_THRESHOLD
-        if incident_type == "QUALITY":
-            signals["qc_fail"] = True
-        if incident_type == "MATERIAL_SHORTAGE":
-            signals["low_material"] = True
+        signals, error_code = self._build_signals(incident_type, source_type, source_id)
 
         edges = self.graph.all_edges()
         impacts = []
@@ -331,15 +445,17 @@ class AnalysisService:
                 "departments": [],
             })
 
-        # Định lượng sản lượng có nguy cơ mất (từ tham số người dùng hoặc công suất tham chiếu).
-        quantification = {
-            "available": False,
-            "message": "Chưa đủ dữ liệu để định lượng (thiếu thời lượng dừng hoặc tốc độ sản xuất).",
-        }
+        # Định lượng theo từng loại sự cố.
         if incident_type == "MACHINE_STOP":
+            quantification = {
+                "kind": "MACHINE_STOP",
+                "available": False,
+                "message": "Chưa đủ dữ liệu để định lượng (thiếu thời lượng dừng hoặc tốc độ sản xuất).",
+            }
             if rate_per_minute is not None and duration_minutes is not None:
                 lost = round(duration_minutes * rate_per_minute, 2)
                 quantification = {
+                    "kind": "MACHINE_STOP",
                     "available": True,
                     "formula": "sản lượng có nguy cơ mất = thời gian dừng (phút) × tốc độ (pcs/phút)",
                     "duration_minutes": duration_minutes,
@@ -361,6 +477,21 @@ class AnalysisService:
                     "missing_info": None,
                     "departments": [],
                 })
+        elif incident_type == "QUALITY":
+            if source_type == "lot" and source_id:
+                quantification = self._quantify_quality(source_id)
+            else:
+                quantification = {"kind": "QUALITY", "available": False,
+                                  "message": "Chưa đủ dữ liệu để định lượng lỗi chất lượng (thiếu đối tượng lô)."}
+        elif incident_type == "MATERIAL_SHORTAGE":
+            if source_type == "material" and source_id:
+                quantification = self._quantify_material(source_id, at_time, is_simulated)
+            else:
+                quantification = {"kind": "MATERIAL_SHORTAGE", "available": False,
+                                  "message": "Chưa đủ dữ liệu để định lượng thiếu vật tư (thiếu đối tượng vật tư)."}
+        else:
+            quantification = {"kind": incident_type, "available": False,
+                              "message": "Chưa đủ dữ liệu để định lượng cho loại sự cố này."}
 
         buffer_estimate = self._buffer_estimate(context, edges, at_time, is_simulated) if at_time else None
         capacity_estimate = self._capacity_estimate(context, duration_minutes, at_time, is_simulated) if at_time else None
@@ -378,17 +509,48 @@ class AnalysisService:
                     "priority": hyp.get("priority", rule.get("priority", "MEDIUM")),
                 })
 
+        # Dữ liệu dùng để điền text_data của hành động (khóa lấy từ quantification/context).
+        text_data = {}
+        if isinstance(quantification, dict):
+            for k, v in quantification.items():
+                if k == "materials":
+                    text_data["materials"] = ", ".join(m.get("material_code") or "" for m in v)
+                elif k == "stockout_time":
+                    continue
+                elif isinstance(v, (str, int, float)) and v is not None:
+                    text_data[k] = v
+        if source_type == "lot" and source_id:
+            node = self.graph.get_node("lot", source_id)
+            if node:
+                text_data["lot"] = node["code"]
+        elif source_type == "material" and source_id:
+            node = self.graph.get_node("material", source_id)
+            if node:
+                text_data["material"] = node["code"]
+        elif source_type == "machine" and source_id:
+            node = self.graph.get_node("machine", source_id)
+            if node:
+                text_data["machine"] = node["code"]
+        text_data["error_code"] = error_code
+        text_data["threshold"] = QC_DEFECT_RATE_THRESHOLD
+
         actions = []
         for rule in matched:
             for action in rule.get("actions", []):
                 code = action["department"]
                 dept = dept_map.get(code)
+                priority = rule.get("priority", "MEDIUM")
+                qkind = quantification.get("kind") if isinstance(quantification, dict) else None
+                if qkind == "QUALITY" and isinstance(quantification.get("defect_rate"), (int, float)):
+                    priority = "HIGH" if quantification["defect_rate"] >= QC_DEFECT_RATE_THRESHOLD else "MEDIUM"
+                elif qkind == "MATERIAL_SHORTAGE" and isinstance(quantification.get("minutes"), (int, float)):
+                    priority = "HIGH" if quantification["minutes"] < 30 else "MEDIUM"
                 actions.append({
                     "department_id": dept["id"] if dept else None,
                     "department_name": dept["name"] if dept else code,
                     "department_code": code,
-                    "action": action["text"],
-                    "priority": rule.get("priority", "MEDIUM"),
+                    "action": self._render_action_text(action, text_data),
+                    "priority": priority,
                 })
 
         return {
@@ -521,3 +683,63 @@ class AnalysisService:
             "hypotheses": self.analysis.list_hypotheses(run_id),
             "actions": self.analysis.list_actions(run_id),
         }
+
+    # Bảng gợi ý hành động theo bộ phận (chỉ đọc, không ghi DB).
+    _MATRIX_TYPES = (
+        ("MACHINE_STOP", "Máy dừng"),
+        ("QUALITY", "Lỗi chất lượng"),
+        ("MATERIAL_SHORTAGE", "Thiếu vật tư"),
+    )
+    _PRIORITY_ORDER = {"LOW": 0, "MEDIUM": 1, "HIGH": 2, "CRITICAL": 3}
+
+    def action_matrix(self, simulated: bool) -> dict:
+        dept_map = self._department_map()
+        id_to_code = {v["id"]: c for c, v in dept_map.items()}
+
+        scenarios = []
+        cells = []
+        seen = {}  # code -> name
+        for itype, label in self._MATRIX_TYPES:
+            run = self.analysis.latest_run_for_type(itype, simulated)
+            if run:
+                incident = self.incidents.get(run["incident_id"])
+                run_id = run["id"]
+                run_at = run["run_at"]
+            else:
+                incident = self.incidents.latest_by_type(itype, simulated)
+                run_id = None
+                run_at = None
+            if incident is None:
+                scenarios.append({"type": itype, "label": label,
+                                  "incident": None, "run_id": None, "run_at": None,
+                                  "max_priority": None})
+                continue
+
+            actions = self.analysis.list_actions(run_id) if run_id else []
+            by_dept = {}
+            for a in actions:
+                code = id_to_code.get(a["department_id"])
+                if code is None:
+                    continue
+                seen.setdefault(code, dept_map.get(code, {}).get("name", code))
+                by_dept.setdefault(code, []).append({
+                    "id": a["id"], "action": a["action"], "priority": a["priority"],
+                    "department_id": a["department_id"],
+                })
+            for code, acts in by_dept.items():
+                cells.append({"department": code, "incident_type": itype, "actions": acts})
+
+            priorities = [a["priority"] for group in by_dept.values() for a in group]
+            max_priority = max(priorities, key=lambda p: self._PRIORITY_ORDER.get(p, 0)) if priorities else None
+            scenarios.append({
+                "type": itype, "label": label,
+                "incident": {"id": incident["id"], "code": incident["code"], "title": incident["title"]},
+                "run_id": run_id, "run_at": run_at.isoformat() if run_at else None,
+                "max_priority": max_priority,
+            })
+
+        departments = [
+            {"code": code, "name": name}
+            for code, name in sorted(seen.items(), key=lambda kv: dept_map.get(kv[0], {}).get("id", 0))
+        ]
+        return {"scenarios": scenarios, "departments": departments, "cells": cells}
