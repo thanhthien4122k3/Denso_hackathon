@@ -357,7 +357,7 @@
   }
   async function loadOptions(key) {
     const d = await api("/api/catalog/" + key + "?page_size=100");
-    return d.data.items.map((r) => ({ value: r.id, label: r.name, code: r.code }));
+    return d.data.items.map((r) => ({ value: r.id, label: (r.code ? r.code + " — " : "") + r.name, code: r.code }));
   }
   const CATALOG_EXTRA = {
     department: [], shift: [],
