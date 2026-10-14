@@ -463,8 +463,8 @@
     const tabs = h("div", { class: "tabs" });
     const body = h("div");
     v.appendChild(h("div", { class: "card" }, [tabs, body]));
-    const views = { sources: viewSources, datasets: viewDatasets, fields: viewFields, flows: viewFlows };
-    const labels = { sources: "Hệ thống nguồn", datasets: "Dataset", fields: "Trường dữ liệu", flows: "Luồng dữ liệu" };
+    const views = { sources: viewSources, datasets: viewDatasets, fields: viewFields, flows: viewFlows, connections: viewConnections, import: viewImport, history: viewHistory };
+    const labels = { sources: "Hệ thống nguồn", datasets: "Dataset", fields: "Trường dữ liệu", flows: "Luồng dữ liệu", connections: "Kết nối nguồn", import: "Nhập dữ liệu", history: "Lịch sử nhập" };
     let active = "sources";
     let tabToken = 0;
     function setView(k) { active = k; const t = ++tabToken; $$("button", tabs).forEach(b => b.classList.toggle("active", b.dataset.v === k)); body.textContent = ""; views[k](body, t, () => t === tabToken); }
@@ -623,6 +623,291 @@
         catch (e) { toast(e.message, "error"); fb.setSubmitting(false); }
       }, row);
       openModal("Thêm luồng dữ liệu", fb.form);
+    }
+    load();
+  }
+
+  /* ============================================================ integration */
+  const DB_TYPES = { postgresql: "PostgreSQL", mysql: "MySQL/MariaDB", mssql: "SQL Server" };
+  const BATCH_STATUS = { PENDING: ["Chờ xử lý", "gray"], VALID: ["Hợp lệ", "blue"], INVALID: ["Không hợp lệ", "red"], FAILED: ["Lỗi", "red"], IMPORTED: ["Đã nhập", "green"], PARTIAL: ["Nhập một phần", "amber"] };
+  function batchBadge(s) { const m = BATCH_STATUS[s] || [s, "gray"]; return badge(m[0], m[1]); }
+
+  async function apiMultipart(path, formData) {
+    const resp = await fetch(path, { method: "POST", body: formData });
+    let body = null; try { body = await resp.json(); } catch (e) {}
+    if (resp.status === 401) { showLogin(); throw new Error("Phiên đăng nhập đã hết hạn."); }
+    if (!resp.ok) throw new Error((body && (body.message || body.detail)) || ("Lỗi " + resp.status));
+    return body;
+  }
+
+  async function viewConnections(body, token, isActive) {
+    const toolbar = h("div", { class: "toolbar" }); const listWrap = h("div"); const pag = h("div", { class: "pagination" });
+    toolbar.appendChild(h("button", { class: "btn btn-primary", text: "Thêm kết nối", onclick: () => connForm(null) }));
+    body.appendChild(toolbar); body.appendChild(listWrap); body.appendChild(pag);
+    const st = { page: 1, tp: 1 };
+    async function load() {
+      listWrap.textContent = ""; listWrap.appendChild(spinner());
+      try {
+        const d = await api("/api/integration/connections?page=" + st.page + "&page_size=20");
+        listWrap.textContent = "";
+        if (!d.data.items.length) { listWrap.appendChild(emptyBox("database", "Chưa có kết nối nguồn", "Thêm kết nối database bên ngoài (chỉ đọc).", h("button", { class: "btn btn-primary btn-sm", text: "Thêm kết nối", onclick: () => connForm(null) }))); return; }
+        renderTable(listWrap, [
+          { key: "db_type", label: "Loại", render: (r) => DB_TYPES[r.db_type] || r.db_type },
+          { key: "host", label: "Host" }, { key: "database_name", label: "Database" }, { key: "username", label: "User" },
+          { key: "last_status", label: "Trạng thái", render: (r) => r.last_status ? badge(r.last_status === "OK" ? "Kết nối OK" : "Lỗi", r.last_status === "OK" ? "green" : "red") : badge("Chưa kiểm tra", "gray") },
+        ], d.data.items, (row) => h("td", {}, [
+          h("button", { class: "btn btn-sm btn-secondary", text: "Kiểm tra", onclick: () => testConn(row.id, load) }),
+          h("button", { class: "btn btn-sm btn-secondary", text: "Sửa", onclick: () => connForm(row) }),
+          h("button", { class: "btn btn-sm btn-ghost", text: "Xóa", onclick: () => { if (confirm("Xóa kết nối?")) api("/api/integration/connections/" + row.id, { method: "DELETE" }).then(() => { toast("Đã xóa."); load(); }).catch(e => toast(e.message, "error")); } }),
+        ]));
+        st.tp = d.data.pagination.total_pages; pagination(pag, st.page, st.tp, (p) => { st.page = p; load(); });
+      } catch (e) { listWrap.textContent = ""; listWrap.appendChild(errorBox(e.message, load)); }
+    }
+    async function testConn(id, reload) {
+      try { const d = await api("/api/integration/connections/" + id + "/test", { method: "POST" }); toast(d.message || (d.data && d.data.message) || "Kết nối thành công."); reload(); }
+      catch (e) { toast(e.message, "error"); reload(); }
+    }
+    async function connForm(row) {
+      const srcs = (await api("/api/system/sources?page_size=100")).data.items.map(r => ({ value: r.id, label: r.code }));
+      const fields = [
+        { name: "source_id", label: "Nguồn dữ liệu (metadata)", type: "select", options: srcs },
+        { name: "db_type", label: "Loại database", type: "select", options: Object.keys(DB_TYPES).map(k => ({ value: k, label: DB_TYPES[k] })), required: true },
+        { name: "host", label: "Host", required: true },
+        { name: "port", label: "Cổng", type: "number" },
+        { name: "database_name", label: "Database" },
+        { name: "username", label: "Username" },
+        { name: "password", label: "Mật khẩu", type: "password", hint: "Để trống để giữ mật khẩu cũ." },
+        { name: "ssl_mode", label: "SSL mode" },
+      ];
+      const initial = row ? { source_id: row.source_id, db_type: row.db_type, host: row.host, port: row.port, database_name: row.database_name, username: row.username, ssl_mode: row.ssl_mode, password: "" } : { db_type: "postgresql", port: 5432 };
+      const fb = formBuilder(fields, async (data, s) => {
+        fb.setSubmitting(true);
+        const payload = { ...data, port: data.port ? Number(data.port) : null, source_id: data.source_id ? Number(data.source_id) : null };
+        if (!data.password) delete payload.password;
+        try { await api(row ? "/api/integration/connections/" + row.id : "/api/integration/connections", { method: row ? "PUT" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }); closeModal(); toast("Đã lưu."); load(); }
+        catch (e) { toast(e.message, "error"); fb.setSubmitting(false); }
+      }, initial);
+      openModal(row ? "Sửa kết nối" : "Thêm kết nối", fb.form);
+    }
+    load();
+  }
+
+  async function viewImport(body, token, isActive) {
+    const ctx = activePageCtx;
+    const seg = h("div", { class: "tabs" });
+    const segBody = h("div");
+    body.appendChild(seg); body.appendChild(segBody);
+    let mode = "file";
+    function setMode(m) { mode = m; $$("button", seg).forEach(b => b.classList.toggle("active", b.dataset.m === m)); segBody.textContent = ""; m === "file" ? renderFile() : renderDb(); }
+    ["file", "db"].forEach(m => seg.appendChild(h("button", { "data-m": m, class: m === mode ? "active" : "", text: m === "file" ? "Từ file (CSV/XLSX)" : "Từ database", onclick: () => setMode(m) })));
+    setMode("file");
+
+    function renderFile() {
+      const c = h("div");
+      segBody.appendChild(c);
+      const fileInput = h("input", { type: "file", accept: ".csv,.xlsx" });
+      c.appendChild(h("div", { class: "toolbar" }, [fileInput]));
+      fileInput.addEventListener("change", () => {
+        const f = fileInput.files && fileInput.files[0];
+        if (!f) return;
+        doPreview(c, f, null);
+      });
+    }
+    async function doPreview(c, file, sheet) {
+      const old = c.querySelector(".int-preview");
+      if (old) old.remove();
+      const box = h("div", { class: "int-preview" });
+      c.appendChild(box);
+      box.appendChild(spinner());
+      try {
+        const fd = new FormData(); fd.append("file", file);
+        const qs = sheet ? ("?sheet=" + encodeURIComponent(sheet)) : "";
+        const d = await apiMultipart("/api/integration/files/preview" + qs, fd);
+        if (!ctx.isCurrent()) return;
+        box.textContent = "";
+        const p = d.data;
+        const toolbar = h("div", { class: "toolbar" });
+        toolbar.appendChild(h("span", { class: "info", text: p.format.toUpperCase() + " · " + p.total_rows + " dòng" + (p.delimiter ? " · dấu '" + p.delimiter + "'" : "") }));
+        if (p.sheets && p.sheets.length > 1) {
+          const sel = selectInput("sheet", p.sheets.map(s => ({ value: s, label: s })), sheet || p.sheets[0]);
+          sel.addEventListener("change", () => doPreview(c, file, sel.value));
+          toolbar.appendChild(field("Sheet", sel));
+        }
+        box.appendChild(toolbar);
+        renderMappingPanel(box, { token: p.token }, p.header);
+        const tbl = h("div");
+        const objRows = p.preview.map(r => { const o = {}; p.header.forEach((hh, i) => o[hh] = r[i]); return o; });
+        renderTable(tbl, p.header.map(h => ({ key: h, label: h })), objRows);
+        box.appendChild(h("div", { class: "card-title", style: "margin-top:12px;" }, [h("span", { text: "Xem trước" })]));
+        box.appendChild(tbl);
+      } catch (e) { box.textContent = ""; box.appendChild(errorBox(e.message, () => doPreview(c, file, sheet))); }
+    }
+
+    function renderDb() {
+      const c = h("div");
+      segBody.appendChild(c);
+      const row = h("div", { class: "toolbar" });
+      c.appendChild(row); c.appendChild(h("div", { class: "int-preview" }));
+      api("/api/integration/connections?page_size=100").then(d => {
+        if (!ctx.isCurrent()) return;
+        const conns = d.data.items;
+        if (!conns.length) { c.querySelector(".int-preview").appendChild(emptyBox("database", "Chưa có kết nối", "Thêm kết nối ở tab 'Kết nối nguồn' trước.")); return; }
+        const connSel = selectInput("conn", conns.map(x => ({ value: x.id, label: x.host + "/" + (x.database_name || "") + " (" + (DB_TYPES[x.db_type] || x.db_type) + ")" })), conns[0].id);
+        const schemaSel = selectInput("schema", []); const tableSel = selectInput("table", []);
+        row.appendChild(field("Kết nối", connSel)); row.appendChild(field("Schema", schemaSel)); row.appendChild(field("Bảng", tableSel));
+        const previewBtn = h("button", { class: "btn btn-primary", text: "Xem trước", onclick: () => loadPreview() });
+        row.appendChild(previewBtn);
+        function loadSchemas() {
+          schemaSel.textContent = ""; schemaSel.appendChild(h("option", { value: "", text: "-- Đang tải --" }));
+          api("/api/integration/connections/" + connSel.value + "/schemas").then(d => {
+            schemaSel.textContent = ""; schemaSel.appendChild(h("option", { value: "", text: "-- Chọn schema --" }));
+            d.data.forEach(s => schemaSel.appendChild(h("option", { value: s, text: s })));
+            if (d.data.length) { schemaSel.value = d.data[0]; loadTables(); }
+          }).catch(e => toast(e.message, "error"));
+        }
+        function loadTables() {
+          if (!schemaSel.value) return;
+          tableSel.textContent = ""; tableSel.appendChild(h("option", { value: "", text: "-- Đang tải --" }));
+          api("/api/integration/connections/" + connSel.value + "/tables?schema=" + encodeURIComponent(schemaSel.value)).then(d => {
+            tableSel.textContent = ""; tableSel.appendChild(h("option", { value: "", text: "-- Chọn bảng --" }));
+            d.data.forEach(t => tableSel.appendChild(h("option", { value: t, text: t })));
+          }).catch(e => toast(e.message, "error"));
+        }
+        function loadPreview() {
+          const box = c.querySelector(".int-preview"); box.textContent = ""; box.appendChild(spinner());
+          const conn = connSel.value, schema = schemaSel.value, table = tableSel.value;
+          if (!conn || !schema || !table) { box.textContent = ""; box.appendChild(h("p", { class: "cell-sub", text: "Chọn kết nối, schema và bảng." })); return; }
+          api("/api/integration/connections/" + conn + "/preview?schema=" + encodeURIComponent(schema) + "&table=" + encodeURIComponent(table) + "&limit=100").then(d => {
+            if (!ctx.isCurrent()) return;
+            box.textContent = "";
+            const p = d.data;
+            renderMappingPanel(box, { connection_id: Number(conn), schema: schema, table: table }, p.columns);
+            const tbl = h("div");
+            const objRows = p.rows.map(r => { const o = {}; p.columns.forEach((hh, i) => o[hh] = r[i]); return o; });
+            renderTable(tbl, p.columns.map(h => ({ key: h, label: h })), objRows);
+            box.appendChild(h("div", { class: "card-title", style: "margin-top:12px;" }, [h("span", { text: "Xem trước" })]));
+            box.appendChild(tbl);
+          }).catch(e => { if (ctx.isCurrent()) { box.textContent = ""; box.appendChild(errorBox(e.message, loadPreview)); } });
+        }
+        connSel.addEventListener("change", loadSchemas); schemaSel.addEventListener("change", loadTables);
+        loadSchemas();
+      }).catch(e => { if (ctx.isCurrent()) c.appendChild(errorBox(e.message)); });
+    }
+
+    async function renderMappingPanel(container, sourceRef, header) {
+      const wrap = h("div", { class: "card", style: "margin:12px 0;" });
+      container.appendChild(wrap);
+      wrap.appendChild(h("div", { class: "card-title" }, [h("span", { text: "Ánh xạ & nhập dữ liệu" })]));
+      let targets = {};
+      try { targets = (await api("/api/integration/targets")).data; } catch (e) { wrap.appendChild(errorBox(e.message)); return; }
+      const keys = Object.keys(targets);
+      if (!keys.length) { wrap.appendChild(h("p", { class: "cell-sub", text: "Chưa có loại dữ liệu đích." })); return; }
+      const targetSel = selectInput("target", keys.map(k => ({ value: k, label: targets[k].label })), keys[0]);
+      const form = h("div", { class: "grid grid-2" });
+      wrap.appendChild(field("Loại dữ liệu đích", targetSel)); wrap.appendChild(form);
+      const colOpts = [{ value: "", label: "-- Chọn cột --" }].concat(header.map(h => ({ value: h, label: h })));
+      const controls = {};
+      function buildForm() {
+        form.textContent = "";
+        const spec = targets[targetSel.value].fields;
+        Object.keys(spec).forEach(fname => {
+          const meta = spec[fname];
+          const sel = selectInput("map_" + fname, colOpts, "");
+          controls[fname] = sel;
+          form.appendChild(field(meta.label, sel, meta.required));
+        });
+      }
+      targetSel.addEventListener("change", buildForm);
+      buildForm();
+      const resultBox = h("div");
+      wrap.appendChild(resultBox);
+      const actions = h("div", { class: "toolbar" });
+      const createBtn = h("button", { class: "btn btn-primary", text: "Kiểm tra & tạo batch" });
+      actions.appendChild(createBtn);
+      wrap.appendChild(actions);
+      let batch = null;
+      createBtn.addEventListener("click", async () => {
+        const mapping = {};
+        Object.keys(controls).forEach(fname => { mapping[fname] = controls[fname].value || null; });
+        const payload = { target_type: targetSel.value, mapping: mapping };
+        if (sourceRef.token) payload.token = sourceRef.token;
+        else { payload.connection_id = sourceRef.connection_id; payload.schema = sourceRef.schema; payload.table = sourceRef.table; }
+        createBtn.disabled = true; createBtn.textContent = "Đang xử lý...";
+        try {
+          const d = await api("/api/integration/batches", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+          batch = d.data;
+          renderBatchResult(resultBox, batch, sourceRef);
+        } catch (e) { toast(e.message, "error"); }
+        createBtn.disabled = false; createBtn.textContent = "Kiểm tra & tạo batch";
+      });
+    }
+
+    function renderBatchResult(box, batch, sourceRef) {
+      box.textContent = "";
+      const s = h("div", { class: "explain" }, [
+        h("div", { style: "display:flex;gap:8px;align-items:center;flex-wrap:wrap;" }, [batchBadge(batch.status), h("strong", { text: "Batch #" + batch.id })]),
+        h("div", { class: "cell-sub", text: "Tổng " + batch.total_rows + " dòng · hợp lệ " + batch.valid_rows + " · lỗi " + batch.error_rows })
+      ]);
+      box.appendChild(s);
+      const errs = batch.error_summary || [];
+      if (errs.length) {
+        const ebox = h("div");
+        ebox.appendChild(h("div", { class: "cell-sub", text: "Lỗi (tối đa 100):" }));
+        errs.slice(0, 20).forEach(e => ebox.appendChild(h("div", { class: "cell-sub", text: e.error })));
+        box.appendChild(ebox);
+      }
+      if (batch.valid_rows > 0) {
+        const confirmBtn = h("button", { class: "btn btn-primary", text: "Xác nhận nhập " + batch.valid_rows + " bản ghi" });
+        confirmBtn.addEventListener("click", async () => {
+          confirmBtn.disabled = true;
+          try {
+            const d = await api("/api/integration/batches/" + batch.id + "/confirm", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+            const b = d.data;
+            box.textContent = "";
+            box.appendChild(h("div", { class: "message visible success", text: "Đã nhập " + b.imported_rows + " bản ghi; trùng " + b.duplicate_rows + "; lỗi " + (b.error_summary || []).length + "." }));
+          } catch (e) { toast(e.message, "error"); confirmBtn.disabled = false; }
+        });
+        box.appendChild(confirmBtn);
+      }
+    }
+  }
+
+  async function viewHistory(body, token, isActive) {
+    const listWrap = h("div"); const pag = h("div", { class: "pagination" });
+    body.appendChild(listWrap); body.appendChild(pag);
+    const st = { page: 1, tp: 1 };
+    async function load() {
+      listWrap.textContent = ""; listWrap.appendChild(spinner());
+      try {
+        const d = await api("/api/integration/batches?page=" + st.page + "&page_size=20");
+        listWrap.textContent = "";
+        if (!d.data.items.length) { listWrap.appendChild(emptyBox("database", "Chưa có lần nhập nào", "Tạo batch ở tab 'Nhập dữ liệu'.")); return; }
+        renderTable(listWrap, [
+          { key: "id", label: "ID" }, { key: "input_type", label: "Nguồn", render: (r) => r.input_type },
+          { key: "source_name", label: "Tên" }, { key: "target_type", label: "Loại đích" },
+          { key: "created_by", label: "Người tạo" },
+          { key: "total_rows", label: "Tổng" }, { key: "valid_rows", label: "Hợp lệ" }, { key: "error_rows", label: "Lỗi" },
+          { key: "imported_rows", label: "Đã nhập" },
+          { key: "status", label: "Trạng thái", render: (r) => batchBadge(r.status) },
+        ], d.data.items, (row) => h("td", {}, [h("button", { class: "btn btn-sm btn-secondary", text: "Xem", onclick: () => showBatch(row.id) })]));
+        st.tp = d.data.pagination.total_pages; pagination(pag, st.page, st.tp, (p) => { st.page = p; load(); });
+      } catch (e) { listWrap.textContent = ""; listWrap.appendChild(errorBox(e.message, load)); }
+    }
+    async function showBatch(id) {
+      try {
+        const d = await api("/api/integration/batches/" + id);
+        const b = d.data;
+        openModal("Batch #" + id, h("div", {}, [
+          h("div", { class: "kv-list" }, [
+            kv("Trạng thái", null, batchBadge(b.status)),
+            kv("Nguồn", (b.input_type || "") + " — " + (b.source_name || "")),
+            kv("Tổng / hợp lệ / lỗi", b.total_rows + " / " + b.valid_rows + " / " + b.error_rows),
+            kv("Đã nhập / trùng", b.imported_rows + " / " + b.duplicate_rows),
+          ]),
+          (b.error_summary && b.error_summary.length) ? h("div", { class: "card-title", style: "margin-top:12px;" }, [h("span", { text: "Lỗi" })]) : null,
+          (b.error_summary || []).slice(0, 30).map(e => h("div", { class: "cell-sub", text: e.error })),
+        ]));
+      } catch (e) { toast(e.message, "error"); }
     }
     load();
   }
@@ -2236,10 +2521,17 @@
       if (!ctx.isCurrent()) return;
       const list = h("div");
       if (!d.data.items.length) list.appendChild(h("p", { class: "cell-sub", text: "Chưa có lần phân tích nào." }));
-      else d.data.items.forEach(r => list.appendChild(h("div", { class: "explain", style: "display:flex;justify-content:space-between;align-items:center;" }, [
-        h("span", { text: "#" + r.id + " — " + r.source_type + " " + r.source_id + " · " + fmt(r.run_at) }),
-        h("button", { class: "btn btn-ghost btn-sm", text: "Xem", onclick: () => viewRun(r.id) }),
-      ])));
+      else d.data.items.forEach(r => {
+        const snap = (r.result && typeof r.result === "object") ? r.result : {};
+        const ce = snap.capacity_estimate;
+        let headline = "";
+        if (ce && ce.estimated_quantity != null) headline = " · " + ce.estimated_quantity + " " + (ce.unit || "pcs") + (ce.duration_minutes != null ? " (" + ce.duration_minutes + " phút)" : "");
+        const label = "#" + r.id + " — sự cố #" + r.source_id + headline + " · " + fmt(r.run_at);
+        list.appendChild(h("div", { class: "explain", style: "display:flex;justify-content:space-between;align-items:center;" }, [
+          h("span", { text: label }),
+          h("button", { class: "btn btn-ghost btn-sm", text: "Xem", onclick: () => viewRun(r.id) }),
+        ]));
+      });
       wrap.appendChild(list);
     } catch (e) {
       if (!ctx.isCurrent()) return;
