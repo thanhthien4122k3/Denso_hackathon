@@ -31,6 +31,7 @@ from app.routers import (
     graph,
     health,
     incidents,
+    integration,
     operations,
     production,
     scenarios,
@@ -151,6 +152,7 @@ app.include_router(tasks.router)
 app.include_router(context.router)
 app.include_router(scenarios.scenarios_router)
 app.include_router(scenarios.survey_router)
+app.include_router(integration.router)
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 

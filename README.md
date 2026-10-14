@@ -201,6 +201,37 @@ Mô tả chi tiết từng trường trong **Bản đồ liên kết** và **Ph�
 
 ---
 
+## C.1. Kết nối nguồn và nhập CSV/XLSX
+
+Menu **Thiết lập dữ liệu → Nguồn dữ liệu & ánh xạ** có thêm 3 tab (không thay đổi các tab cũ):
+**Kết nối nguồn**, **Nhập dữ liệu**, **Lịch sử nhập**.
+
+### Kết nối database bên ngoài (chỉ đọc)
+
+- Hỗ trợ **PostgreSQL**, **MySQL/MariaDB**, **SQL Server** (adapter, chỉ thực hiện truy vấn đọc).
+- Chỉ tài khoản **ADMIN** được tạo/sửa/kiểm tra/xóa cấu hình kết nối.
+- Mật khẩu được **mã hóa** bằng khóa đối xứng từ biến môi trường `SOURCE_ENCRYPTION_KEY`
+  (không lưu plaintext, không trả về trong API, không hiển thị lại trong form).
+  Nếu chưa đặt khóa, app vẫn chạy nhưng **không thể lưu mật khẩu nguồn**.
+- Driver bổ sung:
+  - MySQL/MariaDB: `pip install pymysql` (đã khai trong `requirements.txt`).
+  - SQL Server: cần cài **Microsoft ODBC Driver 18 for SQL Server** + `pip install pyodbc`.
+- Một nguồn ngoài mất kết nối **không** làm ứng dụng ngừng khởi động.
+
+### Nhập file CSV / XLSX
+
+1. Tab **Nhập dữ liệu** → chọn **Từ file** (`.csv` / `.xlsx`).
+2. Xem trước header + dữ liệu mẫu, chọn sheet (nếu XLSX nhiều sheet).
+3. Chọn loại dữ liệu đích (hiện hỗ trợ **Sản lượng**) và **ánh xạ cột nguồn → trường đích**.
+4. **Kiểm tra & tạo batch** → hệ thống báo số dòng hợp lệ / lỗi / trùng.
+5. **Xác nhận nhập** → ghi vào dữ liệu nghiệp vụ qua service hiện có (không bỏ qua validation).
+
+- Giới hạn mặc định: file tối đa **20 MB**, **50.000 dòng** mỗi batch.
+- CSV giữ nguyên giá trị dạng chuỗi (không suy diễn kiểu) nên mã có số 0 đầu được bảo toàn.
+- Dữ liệu nằm ở **staging** (batch) trước khi được xác nhận; không tự ghi thẳng vào bảng nghiệp vụ.
+
+---
+
 ## D. Mở từ điện thoại Android
 
 1. Trên máy tính gõ `ipconfig`, tìm IP (ví dụ `192.168.1.10`).

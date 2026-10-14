@@ -21,6 +21,8 @@ load_dotenv(ENV_FILE, override=False)
 MAX_QUANTITY = int(os.getenv("MAX_QUANTITY", "1000000000"))
 MATERIAL_LOW_THRESHOLD = int(os.getenv("MATERIAL_LOW_THRESHOLD", "50"))
 QC_DEFECT_RATE_THRESHOLD = float(os.getenv("QC_DEFECT_RATE_THRESHOLD", "5"))
+# Khóa mã hóa đối xứng cho mật khẩu nguồn bên ngoài (không lưu trong DB/repo).
+SOURCE_ENCRYPTION_KEY = os.getenv("SOURCE_ENCRYPTION_KEY", "")
 DEFAULT_PAGE_SIZE = int(os.getenv("DEFAULT_PAGE_SIZE", "20"))
 MAX_PAGE_SIZE = int(os.getenv("MAX_PAGE_SIZE", "100"))
 

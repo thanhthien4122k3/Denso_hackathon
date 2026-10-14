@@ -5,6 +5,13 @@ pydantic>=2.6,<3.0
 python-dotenv>=1.0,<2.0
 PyYAML>=6.0,<7.0
 
+# Tích hợp nguồn dữ liệu ngoài
+python-multipart>=0.0.9,<1.0
+cryptography>=42.0,<51.0
+openpyxl>=3.1,<4.0
+pymysql>=1.1,<2.0
+
 # Kiểm thử
 pytest>=8.0,<9.0
 httpx>=0.27,<1.0
+esprima>=4.0,<5.0
